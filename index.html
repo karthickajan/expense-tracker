@@ -32,18 +32,42 @@ li{list-style:none;display:flex;justify-content:space-between;padding:8px 0;bord
 .pc{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:14px}.pc.on{border-color:var(--ac);box-shadow:0 0 0 1px var(--ac) inset}
 .pc h3{margin:0 0 8px;font-size:17px;cursor:pointer}.mr{display:flex;align-items:center;justify-content:space-between;padding:6px 0}
 .sp{display:flex;align-items:center;gap:8px}.sp button{width:40px;height:40px;border-radius:12px;font-size:22px;padding:0}.sp b{min-width:32px;text-align:center;font-size:22px;color:var(--mu)}.sp b.on{color:var(--ok)}.sp b.gn{color:var(--wa)}
+.modal-bg{position:fixed;inset:0;background:#0008;display:flex;align-items:center;justify-content:center;z-index:50;backdrop-filter:blur(4px)}
+.modal{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px;max-width:420px;width:92%;box-shadow:0 20px 50px #000a}
 </style></head><body>
 <header><div class="row"><h1>🍛 Mess Expense Splitter</h1><span class="pill" id="st">Loading…</span></div>
 <div class="row"><button id="pm">‹</button><select id="mo"></select><button id="nm">›</button><button id="td">Today</button></div>
 <div class="row tabs"><button data-t="entry">✏️ Entry</button><button data-t="log">Daily Log</button><button data-t="split">Split</button><button data-t="set">Settings</button>
 <button id="op" class="p">📂 Open Excel</button><button id="ex">⬇ Export</button><input type="file" id="fi" accept=".xlsx" hidden></div></header>
 <main id="app"></main>
+<div id="modal-root"></div>
 <script>
+/* ---------- Pre-configured Live Endpoint Credentials (No Hardcoded Sheet Data) ---------- */
+const DEFAULT_CFG = {
+  url: 'https://script.google.com/macros/s/AKfycbwxug3Sb56OyvTVAZKKaUHrPl0JCjH7_8m5rFruAXzGi1gSJNgAqzvnRjOyPEIAmfLCPw/exec',
+  token: 'mess-expense'
+};
+const OLD_URLS = [
+  'https://script.google.com/macros/s/AKfycbzp4KighWJxSl-MGV9cOjS9BhQExOgCWoasUDdNU6rd8nSc_d2Nut_INVXYiPsMnbhaNQ/exec'
+];
+
+const EMPTY_DB = () => ({ settings: { fee: 6000, lw: 1, dw: 1, friends: [] }, months: {} });
+let lastRawResponse = null;
+
 const $=s=>document.querySelector(s),pad=n=>String(n).padStart(2,'0'),esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const inr=n=>'₹'+n.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2}),dim=(y,m)=>new Date(y,m,0).getDate();
 const now=new Date(),ymd=d=>d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()),TK=ymd(now),addD=(s,n)=>{const d=new Date(s+'T12:00');d.setDate(d.getDate()+n);return ymd(d)},isWE=d=>[0,6].includes(new Date(d+'T12:00').getDay()),lbl=d=>new Date(d+'T12:00').toLocaleString('en',{weekday:'short',day:'2-digit',month:'short'});
 let cur={y:now.getFullYear(),m:now.getMonth()+1},tab='entry',ptab='entry',who='',sel=TK,method='equal',db,handle=null,tm,saving=false,again=false,bad=false,pend=false;
 const KEY=()=>cur.y+'-'+pad(cur.m);
+
+/* Custom non-blocking UI message & confirmation helper */
+function showMsg(msg, onConfirm=null){
+  const root=$('#modal-root');
+  root.innerHTML=`<div class="modal-bg"><div class="modal"><p style="margin:0 0 16px;font-size:15px">${esc(msg)}</p><div class="row" style="justify-content:flex-end">${onConfirm?'<button id="m-cancel">Cancel</button><button class="p" id="m-ok">Continue</button>':'<button class="p" id="m-ok">OK</button>'}</div></div></div>`;
+  $('#m-ok').onclick=()=>{root.innerHTML='';if(onConfirm)onConfirm()};
+  if($('#m-cancel'))$('#m-cancel').onclick=()=>{root.innerHTML=''};
+}
+
 function newMonth(k){const[y,m]=k.split('-').map(Number),pv=Object.keys(db.months).filter(x=>x<k).sort().pop(),s=pv?db.months[pv]:db.settings,fr=db.settings.friends.filter(f=>f.active).map(f=>f.name);
  return{fee:s.fee,lw:s.lw,dw:s.dw,friends:fr,rows:Array.from({length:dim(y,m)},(_,i)=>({d:`${k}-${pad(i+1)}`,g:0,v:fr.map(()=>[0,0]),note:''}))}}
 const ens=k=>db.months[k]||(db.months[k]=newMonth(k)),M=()=>ens(KEY());
@@ -55,55 +79,135 @@ function calc(mo,meth){
  const gs=alloc(G,U),cs=meth==='equal'?alloc(F,U.map(()=>1)):alloc(F,U);
  const rows=mo.friends.map((n,i)=>({n,l:mo.rows.reduce((s,r)=>s+r.v[i][0],0),d:mo.rows.reduce((s,r)=>s+r.v[i][1],0),u:U[i],g:gs[i]/100,c:cs[i]/100,t:(gs[i]+cs[i])/100}));
  return{rows,G:G/100,F:F/100,T,sum:rows.reduce((s,r)=>s+Math.round(r.t*100),0)/100,days:mo.rows.length}}
+
 /* ---------- Excel I/O ---------- */
 const sAOA=()=>{const s=db.settings;return[['Cook Fee (₹)',s.fee,'Lunch Weight',s.lw,'Dinner Weight',s.dw],[],['Friend','Active'],...s.friends.map(f=>[f.name,f.active?1:0])]};
 const mAOA=k=>{const m=db.months[k],a=[['Cook Fee (₹)',m.fee,'Lunch Weight',m.lw,'Dinner Weight',m.dw],['Date','Grocery (₹)',...m.friends.flatMap(f=>[f,'']),'Notes'],['','',...m.friends.flatMap(()=>['Lunch','Dinner']),'']];m.rows.forEach(r=>a.push([r.d,r.g,...r.v.flat(),r.note]));return a};
 function toWB(){const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(sAOA()),'Settings');Object.keys(db.months).sort().forEach(k=>XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(mAOA(k)),k));return wb}
-function fromWB(wb){const S=XLSX.utils.sheet_to_json(wb.Sheets.Settings,{header:1,defval:''}),d={months:{},settings:{fee:+S[0][1],lw:+S[0][3],dw:+S[0][5],friends:S.slice(3).filter(r=>r[0]!=='').map(r=>({name:String(r[0]),active:+r[1]!==0}))}};
- wb.SheetNames.filter(n=>/^\d{4}-\d{2}$/.test(n)).forEach(n=>{const A=XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,defval:''}),h=A[1],nm=[];
-  for(let c=2;c<h.length&&h[c]!=='Notes';c+=2)nm.push(String(h[c]));
-  d.months[n]={fee:+A[0][1],lw:+A[0][3],dw:+A[0][5],friends:nm,rows:A.slice(3).filter(r=>r[0]!=='').map(r=>({d:String(r[0]),g:+r[1]||0,v:nm.map((_,i)=>[+r[2+2*i]||0,+r[3+2*i]||0]),note:String(r[2+2*nm.length]||'')}))}});return d}
+function fromWB(wb){
+ const def=EMPTY_DB();
+ const sSheet=wb.Sheets&&(wb.Sheets.Settings||wb.Sheets.settings);
+ const S=sSheet?XLSX.utils.sheet_to_json(sSheet,{header:1,defval:''}):[];
+ const hasS=S.length>0&&S[0]&&S[0].length>=2;
+ const d={months:{},settings:hasS?{fee:+S[0][1]||6000,lw:+S[0][3]||1,dw:+S[0][5]||1,friends:S.slice(3).filter(r=>r&&r[0]!==''&&r[0]!==undefined).map(r=>({name:String(r[0]),active:+r[1]!==0}))}:def.settings};
+ (wb.SheetNames||[]).filter(n=>/^\d{4}-\d{2}$/.test(n)).forEach(n=>{const A=XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,defval:''});if(!A||A.length<2)return;const h=A[1]||[],nm=[];
+  for(let c=2;c<h.length&&h[c]!=='Notes';c+=2)if(h[c]!=='')nm.push(String(h[c]));
+  d.months[n]={fee:+(A[0]&&A[0][1])||d.settings.fee,lw:+(A[0]&&A[0][3])||d.settings.lw,dw:+(A[0]&&A[0][5])||d.settings.dw,friends:nm,rows:A.slice(3).filter(r=>r&&r[0]!=='').map(r=>{
+   let dt=r[0];if(typeof dt==='string'&&dt.includes('T'))dt=dt.slice(0,10);
+   return{d:String(dt),g:+r[1]||0,v:nm.map((_,i)=>[+r[2+2*i]||0,+r[3+2*i]||0]),note:String(r[2+2*nm.length]||'')}
+  })}});return d}
 const fromAOA=o=>fromWB({SheetNames:Object.keys(o),Sheets:Object.fromEntries(Object.entries(o).map(([k,a])=>[k,XLSX.utils.aoa_to_sheet(a)]))});
-const st=(t,k='')=>{const e=$('#st');e.textContent=t;e.className='pill '+(k||'')};
-let cfg={};
-try{const saved=JSON.parse(localStorage.getItem('messcfg')); if(saved && saved.url) cfg=saved;}catch(e){}
+
+/* Universal normalizer: handles {settings, months}, {sheets: {...}}, or AOA {Settings: [...], "2026-10": [...]} */
+function normalizeCloudData(j){
+ if(!j||typeof j!=='object')return EMPTY_DB();
+ if(j.data&&typeof j.data==='object'&&!Array.isArray(j.data))j=j.data;
+ if(j.sheets&&typeof j.sheets==='object')return fromAOA(j.sheets);
+ if(j.Settings||Object.keys(j).some(k=>/^\d{4}-\d{2}$/.test(k)))return fromAOA(j);
+ if(j.settings||j.months){
+  let settings=EMPTY_DB().settings;
+  if(Array.isArray(j.settings)){
+   const S=j.settings;
+   if(S.length&&S[0])settings={fee:+S[0][1]||6000,lw:+S[0][3]||1,dw:+S[0][5]||1,friends:S.slice(3).filter(r=>r&&r[0]!=='').map(r=>({name:String(r[0]),active:+r[1]!==0}))};
+  }else if(j.settings&&typeof j.settings==='object'){
+   const s=j.settings;
+   const fr=Array.isArray(s.friends)?s.friends.map(f=>typeof f==='string'?{name:f,active:true}:{name:String(f.name||''),active:f.active!==false&&f.active!==0}).filter(f=>f.name):[];
+   settings={fee:+(s.fee??s.cookFee??6000),lw:+(s.lw??s.lunchWeight??1),dw:+(s.dw??s.dinnerWeight??1),friends:fr};
+  }
+  const months={};
+  if(j.months&&typeof j.months==='object'){
+   Object.entries(j.months).forEach(([k,m])=>{
+    if(!/^\d{4}-\d{2}$/.test(k)||!m)return;
+    if(Array.isArray(m)){
+     const parsed=fromAOA({Settings:sAOA(),[k]:m});
+     if(parsed.months[k])months[k]=parsed.months[k];
+    }else if(typeof m==='object'){
+     const[y,moNum]=k.split('-').map(Number);
+     const fr=Array.isArray(m.friends)&&m.friends.length?m.friends.map(f=>typeof f==='string'?f:f.name):settings.friends.filter(f=>f.active).map(f=>f.name);
+     const rawRows=Array.isArray(m.rows)?m.rows:Array.isArray(m.days)?m.days:[];
+     const rows=rawRows.length?rawRows.map((r,idx)=>{
+      let vArr=fr.map(()=>[0,0]);
+      if(Array.isArray(r.v)){
+       vArr=fr.map((_,i)=>Array.isArray(r.v[i])?[+r.v[i][0]||0,+r.v[i][1]||0]:[0,0]);
+      }else if(r.meals&&typeof r.meals==='object'){
+       vArr=fr.map((fn,i)=>{const mv=r.meals[fn]??r.meals[i];return Array.isArray(mv)?[+mv[0]||0,+mv[1]||0]:mv&&typeof mv==='object'?[+(mv.l??mv.lunch??0),+(mv.d??mv.dinner??0)]:[0,0]});
+      }
+      return{
+       d:String((r.d||r.date||`${k}-${pad(idx+1)}`)).slice(0,10),
+       g:+(r.g??r.grocery??0)||0,
+       v:vArr,
+       note:String(r.note??r.notes??'')
+      };
+     }):Array.from({length:dim(y,moNum)},(_,i)=>({d:`${k}-${pad(i+1)}`,g:0,v:fr.map(()=>[0,0]),note:''}));
+     months[k]={fee:+(m.fee??settings.fee),lw:+(m.lw??settings.lw),dw:+(m.dw??settings.dw),friends:fr,rows};
+    }
+   });
+  }
+  return{settings,months};
+ }
+ return EMPTY_DB();
+}
+
+const st=(t,k='')=>{const e=$('#st');e.textContent=t;e.className='pill '+k};
+
+let cfg = {...DEFAULT_CFG};
+try{
+  const savedCfg = JSON.parse(localStorage.getItem('messcfg'));
+  if(savedCfg && savedCfg.url && !OLD_URLS.includes(savedCfg.url.trim())) {
+    cfg = savedCfg;
+  } else {
+    localStorage.setItem('messcfg', JSON.stringify(cfg));
+  }
+}catch(e){}
+
 const touched=new Set();
+const net=async(u,o={},ms=25000)=>{let t;const to=new Promise((_,rj)=>t=setTimeout(()=>rj(new Error('TIMEOUT')),ms));
+ try{const r=await Promise.race([fetch(u,o),to]),x=await Promise.race([r.text(),to]);let j;
+  try{j=JSON.parse(x)}catch(e){throw new Error('Script returned a web page, not JSON (HTTP '+r.status+'). Ensure the script is attached to a native Google Sheet and deployed as Execute as: Me / Access: Anyone.')}
+  if(j&&j.error)throw new Error(j.error);
+  return j}
+ catch(e){throw e.message==='TIMEOUT'?new Error('Timed out after '+ms/1000+' s — check your network connection'):(e instanceof TypeError||/failed to fetch|network|load failed/i.test(e.message))?new Error('Failed to fetch from Apps Script (Ensure Web App access is set to "Anyone" and the spreadsheet is a native Google Sheet).'):e}
+ finally{clearTimeout(t)}};
 async function cloudGet(){
-  if(!cfg.url) throw new Error('No Google Sheet URL configured');
-  const url=cfg.url+'?token='+encodeURIComponent(cfg.token||'');
-  const r=await fetch(url,{cache:'no-store'});
-  if(!r.ok) throw new Error('HTTP '+r.status);
-  const text=await r.text();
-  let o;
-  try{o=JSON.parse(text);}catch(e){throw new Error('Invalid JSON response');}
-  if(o && o.error) throw new Error(o.error);
-  return fromAOA(o);
+ const raw=await net(cfg.url+(cfg.url.includes('?')?'&':'?')+'token='+encodeURIComponent(cfg.token||''));
+ lastRawResponse=raw;
+ return normalizeCloudData(raw);
 }
 async function save(){if(saving){again=true;return}saving=true;pend=false;let err='';
  try{localStorage.setItem('mess',JSON.stringify(db))}catch(e){err='browser storage'}
- if(cfg.url){const names=[...touched];touched.clear();if(names.length)try{const sheets={};names.forEach(n=>{if(n==='Settings')sheets[n]=sAOA();else if(db.months[n])sheets[n]=mAOA(n)});
-   const r=await fetch(cfg.url,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({token:cfg.token,sheets})}),o=await r.json();if(!o.ok)throw new Error(o.error||'rejected')}
+ if(cfg.url){const names=[...touched];touched.clear();if(names.length)try{
+   const sheets={};
+   names.forEach(n=>{if(n==='Settings')sheets[n]=sAOA();else if(db.months[n])sheets[n]=mAOA(n)});
+   const allSheets={Settings:sAOA()};
+   Object.keys(db.months).forEach(k=>{allSheets[k]=mAOA(k)});
+   const payload={token:cfg.token,sheets,allSheets,settings:db.settings,months:db.months,data:db};
+   const o=await net(cfg.url,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(payload)},30000);
+   if(o&&o.ok===false&&o.error)throw new Error(o.error)}
   catch(e){names.forEach(n=>touched.add(n));err='Google Sheet ('+(e.message||'network')+')'}}
  else if(handle){try{const w=await handle.createWritable();await w.write(XLSX.write(toWB(),{bookType:'xlsx',type:'array'}));await w.close()}catch(e){err='Excel file ('+(e.name||'error')+') — is it open in Excel?'}}
  saving=false;bad=!!err;const t=new Date().toLocaleTimeString();
- if(err)st('❌ Save FAILED: '+err+' · click to retry','err');else if(cfg.url)st('✅ Saved to Google Sheet · '+t,'ok');else if(handle)st('✅ Saved to '+handle.name+' · '+t,'ok');else st('Ready · local draft active');
+ if(err)st('❌ Save FAILED: '+err+' · click to retry','err');else if(cfg.url)st('✅ Saved to Google Sheet · '+t,'ok');else if(handle)st('✅ Saved to '+handle.name+' · '+t,'ok');else st('⚠ Saved in browser only · connect Google Sheet in Settings','warn');
  if(again){again=false;save()}}
 const dirty=all=>{if(all){Object.keys(db.months).forEach(k=>touched.add(k));touched.add('Settings')}else touched.add(KEY());if(tab==='set')touched.add('Settings');pend=true;st('Saving…');clearTimeout(tm);tm=setTimeout(save,400)};
 async function pull(){if(!cfg.url||pend||saving||touched.size||/INPUT|SELECT/.test(document.activeElement&&document.activeElement.tagName))return;
- try{const n=await cloudGet(),J=JSON.stringify;if(J(n.settings)!==J(db.settings)||Object.keys(n.months).some(k=>J(n.months[k])!==J(db.months[k]))){db.settings=n.settings;Object.assign(db.months,n.months);render()}}catch(e){}}
+ try{const n=await cloudGet(),J=JSON.stringify;
+  if(n.settings&&n.settings.friends&&n.settings.friends.length&&Object.keys(n.months||{}).length){
+   if(J(n.settings)!==J(db.settings)||Object.keys(n.months).some(k=>J(n.months[k])!==J(db.months[k]))){db.settings=n.settings;Object.assign(db.months,n.months);render()}
+  }}catch(e){}}
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)pull()});setInterval(pull,45000);
 $('#st').onclick=async()=>{if(handle)try{await handle.requestPermission({mode:'readwrite'})}catch(e){}save()};
 window.onbeforeunload=e=>{if(pend||bad||saving){e.preventDefault();e.returnValue=''}};
-function load(buf,name){db=fromWB(XLSX.read(buf));render();st('Loaded '+(name||'file'))}
+function load(buf,name){db=fromWB(XLSX.read(buf));render();st('Loaded '+(name||'file'),'ok')}
 async function openFile(){if(window.showOpenFilePicker){try{const[h]=await showOpenFilePicker({types:[{accept:{'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':['.xlsx']}}]});await h.requestPermission({mode:'readwrite'});handle=h;load(await(await h.getFile()).arrayBuffer(),h.name);save()}catch(e){if(e.name!=='AbortError')st('❌ Could not open file: '+(e.message||e.name),'err')}}else $('#fi').click()}
-/* ---------- views ---------- */
+
+/* ---------- Views ---------- */
 function monthOpts(){const ks=new Set(Object.keys(db.months));ks.add(KEY());for(let i=-1;i<=1;i++){const d=new Date(now.getFullYear(),now.getMonth()+i,1);ks.add(d.getFullYear()+'-'+pad(d.getMonth()+1))}
  $('#mo').innerHTML=[...ks].sort().map(k=>{const[y,m]=k.split('-');return`<option value="${k}" ${k===KEY()?'selected':''}>${new Date(y,m-1).toLocaleString('en',{month:'long',year:'numeric'})}</option>`}).join('')}
 function foot(mo){const f=mo.friends.map((_,i)=>[0,1].map(j=>mo.rows.reduce((s,r)=>s+r.v[i][j],0)));return`<tr><td>TOTAL (${mo.rows.length} days)</td><td>${mo.rows.reduce((s,r)=>s+(+r.g||0),0)}</td>${f.map(p=>`<td>${p[0]}</td><td>${p[1]}</td>`).join('')}<td></td></tr>`}
 const cls=v=>v>1?'vn':v==1?'v1':'v0';
 const rowOf=d=>{const m=db.months[d.slice(0,7)],r=m&&m.rows.find(x=>x.d===d);return r?{m,r}:null};
 const srcOpts=t=>Array.from({length:7},(_,i)=>addD(t,-i-1)).map(d=>{const x=rowOf(d),has=x&&x.r.v.some(p=>p[0]||p[1]);return`<option value="${d}" ${has?'':'disabled'}>${lbl(d)}${has?'':' — no data'}</option>`}).join('');
-function copyDay(t,s){const a=rowOf(s);if(!a)return alert('No data on that day');const mo=ens(t.slice(0,7)),r=mo.rows.find(x=>x.d===t);if(!r)return;
+function copyDay(t,s){const a=rowOf(s);if(!a)return showMsg('No data on that day');const mo=ens(t.slice(0,7)),r=mo.rows.find(x=>x.d===t);if(!r)return;
  mo.friends.forEach((n,i)=>{const j=a.m.friends.indexOf(n);r.v[i]=j<0?[0,0]:[...a.r.v[j]]});dirty()}
 function logView(){const mo=M(),t0=sel.startsWith(KEY())?sel:KEY()+'-01';
  $('#app').innerHTML=`<div class="row" style="margin-bottom:10px">⚡ Quick fill <select class="inp" id="ct">${mo.rows.map(r=>`<option value="${r.d}" ${r.d===t0?'selected':''}>${lbl(r.d)}</option>`).join('')}</select> from <select class="inp" id="cs">${srcOpts(t0)}</select><button class="p" id="cg">Copy</button>
@@ -151,18 +255,26 @@ function splitView(){const mo=M(),c=calc(mo,method),mx=Math.max(...c.rows.map(r=
  <li><span>Avg grocery cost / meal unit</span><span>${c.T?inr(c.G/c.T):'—'}</span></li></ul>${c.T?'':'<p class="bad">No meals logged yet — groceries cannot be split.</p>'}
  <p class="mu">Shares are rounded to the paisa with the leftover paise handed out fairly, so the total always matches exactly.</p></div>`}
 function setView(){const mo=M(),s=db.settings;
+ const rawPreview=lastRawResponse?esc(JSON.stringify(lastRawResponse,null,2).slice(0,2500)):'No live response captured yet.';
  $('#app').innerHTML=`<div class="card"><b>${$('#mo').selectedOptions[0].text} — cook fee & weights</b><p class="mu">Changes apply to this month only; new months copy the latest month.</p>
  <div class="row">Cook fee ₹<input class="inp" type="number" id="fee" value="${mo.fee}" style="width:100px">Lunch weight<input class="inp" type="number" step="0.1" id="lw" value="${mo.lw}" style="width:70px">Dinner weight<input class="inp" type="number" step="0.1" id="dw" value="${mo.dw}" style="width:70px"></div></div>
  <div class="card" style="margin-top:14px"><b>Friends (${s.friends.filter(f=>f.active).length} active)</b><ul>${s.friends.map((f,i)=>`<li><span class="${f.active?'':'mu'}">${esc(f.name)}${f.active?'':' (removed)'}</span><button data-x="${i}">${f.active?'Remove':'Re-add'}</button></li>`).join('')}</ul>
  <div class="row" style="margin-top:12px"><input class="inp" id="nn" placeholder="New friend name"><button class="p" id="add">+ Add friend</button></div>
  <p class="mu">Adding/removing updates the month you're viewing and all future months. Past months keep their original columns and data.</p></div>
  <div class="card" style="margin-top:14px"><b>☁️ Cloud sync — Google Sheet</b><p class="mu">${cfg.url?'Connected: every edit saves to your Google Sheet, and changes from others appear automatically.':'Paste the Apps Script Web App URL and your passphrase (kept only in this browser).'}</p>
- <div class="row"><input class="inp" id="cu" placeholder="https://script.google.com/macros/s/…/exec" style="flex:1;min-width:240px" value="${esc(cfg.url||'')}"><input class="inp" id="ck" type="password" placeholder="passphrase" value="${esc(cfg.token||'')}"><button class="p" id="cc">Connect & load</button>${cfg.url?'<button id="cd">Disconnect</button>':''}</div></div>`;
+ <div class="row"><input class="inp" id="cu" placeholder="https://script.google.com/macros/s/…/exec" style="flex:1;min-width:240px" value="${esc(cfg.url||'')}"><input class="inp" id="ck" type="password" placeholder="passphrase" value="${esc(cfg.token||'')}"><button class="p" id="cc">🔄 Test & Reload from Sheet</button>${cfg.url?'<button id="cd">Disconnect</button>':''}</div>
+ <details style="margin-top:12px"><summary class="lk" style="font-size:12px">🔍 Live Response Inspector (Raw JSON from Apps Script)</summary><pre style="margin-top:8px;padding:10px;background:var(--bg);border:1px solid var(--line);border-radius:10px;overflow:auto;max-height:240px;font-size:12px">${rawPreview}</pre></details></div>`;
  ['fee','lw','dw'].forEach(k=>$('#'+k).oninput=e=>{const v=+e.target.value||0;mo[k]=v;db.settings[k]=v;dirty()})}
 function render(){if(tab==='entry')cur={y:+sel.slice(0,4),m:+sel.slice(5,7)};monthOpts();document.querySelectorAll('.tabs [data-t]').forEach(b=>b.classList.toggle('on',b.dataset.t===(tab==='person'?ptab:tab)));({entry:entryView,log:logView,split:splitView,set:setView,person:personView})[tab]()}
-function friendOp(name,on){const mo=M(),f=db.settings.friends.find(x=>x.name===name),i=mo.friends.indexOf(name);
+function friendOp(name,on,force=false){const mo=M(),f=db.settings.friends.find(x=>x.name===name),i=mo.friends.indexOf(name);
  if(on){if(i<0){mo.friends.push(name);mo.rows.forEach(r=>r.v.push([0,0]))}}
- else if(i>=0){if(mo.rows.some(r=>r.v[i][0]||r.v[i][1])&&!confirm(name+' has data this month. Removing deletes their columns for this month (past months stay intact). Continue?'))return false;mo.friends.splice(i,1);mo.rows.forEach(r=>r.v.splice(i,1))}
+ else if(i>=0){
+  if(!force && mo.rows.some(r=>r.v[i][0]||r.v[i][1])){
+   showMsg(name+' has data this month. Removing deletes their columns for this month (past months stay intact). Continue?', ()=>{friendOp(name,on,true);dirty(1);render()});
+   return false;
+  }
+  mo.friends.splice(i,1);mo.rows.forEach(r=>r.v.splice(i,1));
+ }
  f.active=on;Object.keys(db.months).filter(k=>k>KEY()).forEach(k=>{const m=db.months[k],j=m.friends.indexOf(name);if(on&&j<0){m.friends.push(name);m.rows.forEach(r=>r.v.push([0,0]))}if(!on&&j>=0){m.friends.splice(j,1);m.rows.forEach(r=>r.v.splice(j,1))}});return true}
 document.addEventListener('click',e=>{const t=e.target,sb=t.closest('[data-s]');
  if(sb){const mo=ens(sel.slice(0,7)),r=mo.rows.find(x=>x.d===sel),i=+sb.dataset.s,k=+sb.dataset.k;r.v[i][k]=Math.max(0,r.v[i][k]+ +sb.dataset.d);$('#c'+i).outerHTML=cardHTML(mo,r,i);sumLine(r);dirty();return}
@@ -175,18 +287,44 @@ document.addEventListener('click',e=>{const t=e.target,sb=t.closest('[data-s]');
  else if(b.id==='dp'||b.id==='dn'){sel=addD(sel,b.id==='dp'?-1:1);render()}
  else if(b.id==='cp'){const s=$('#cs').value;if(s){copyDay(sel,s);render()}}
  else if(b.id==='cg'){const s=$('#cs').value;if(s){copyDay($('#ct').value,s);render()}}
- else if(b.id==='cl'){if(confirm('Clear lunch/dinner for this day?')){ens(sel.slice(0,7)).rows.find(x=>x.d===sel).v=M().friends.map(()=>[0,0]);dirty();render()}}
+ else if(b.id==='cl'){showMsg('Clear lunch/dinner for this day?',()=>{ens(sel.slice(0,7)).rows.find(x=>x.d===sel).v=M().friends.map(()=>[0,0]);dirty();render()})}
  else if(b.id==='bk'){tab=ptab;render()}
- else if(b.id==='cc'){const old=cfg;cfg={url:$('#cu').value.trim(),token:$('#ck').value};st('Connecting…');cloudGet().then(n=>{db=n;localStorage.setItem('messcfg',JSON.stringify(cfg));touched.clear();render();st('✅ Connected to Google Sheet','ok')}).catch(x=>{cfg=old;st('❌ Could not connect: '+x.message,'err')})}
+ else if(b.id==='cc'){const old=cfg;cfg={url:$('#cu').value.trim(),token:$('#ck').value};st('⏳ Fetching live data from Google Sheet…');cloudGet().then(n=>{
+  db=n;localStorage.setItem('mess',JSON.stringify(db));localStorage.setItem('messcfg',JSON.stringify(cfg));touched.clear();render();
+  st(`✅ Loaded live from Google Sheet (${db.settings.friends.length} friends, ${Object.keys(db.months).length} months)`,'ok');
+ }).catch(x=>{cfg=old;st('❌ Could not connect: '+x.message,'err')})}
  else if(b.id==='cd'){cfg={};localStorage.removeItem('messcfg');render();st('Disconnected — browser copy only','warn')}
  else if(b.id==='op')openFile();else if(b.id==='ex')XLSX.writeFile(toWB(),'expenses.xlsx');
- else if(b.id==='add'){const n=$('#nn').value.trim();if(!n)return;const f=db.settings.friends.find(x=>x.name.toLowerCase()===n.toLowerCase());if(f&&f.active)return alert('Already exists');
+ else if(b.id==='add'){const n=$('#nn').value.trim();if(!n)return;const f=db.settings.friends.find(x=>x.name.toLowerCase()===n.toLowerCase());if(f&&f.active)return showMsg('Already exists');
   if(f)friendOp(f.name,true);else{db.settings.friends.push({name:n,active:true});friendOp(n,true)}dirty(1);render()}
  else if(b.dataset.x!==undefined){const f=db.settings.friends[b.dataset.x];if(friendOp(f.name,!f.active)){dirty(1);render()}}});
 $('#mo').onchange=e=>{const[y,m]=e.target.value.split('-').map(Number);cur={y,m};sel=KEY()+'-'+pad(Math.min(+sel.slice(8),dim(y,m)));render()};
 $('#fi').onchange=async e=>{const f=e.target.files[0];if(f)load(await f.arrayBuffer(),f.name)};
-(async()=>{try{const l=localStorage.getItem('mess');if(l)db=JSON.parse(l)}catch(e){}
- if(cfg.url){try{db=await cloudGet();st('✅ Loaded from Google Sheet','ok')}catch(e){console.warn('Google Sheet sync failed:', e); st('⚠ Google Sheet unavailable — browser copy is active'); }}
- if(!db){try{const r=await fetch('expenses.xlsx');if(r.ok)db=fromWB(XLSX.read(await r.arrayBuffer()))}catch(e){}}
- if(!db)db={settings:{fee:6000,lw:1,dw:1,friends:[]},months:{}};render();if(!cfg.url)st('Ready · local draft active');})();
+(async()=>{
+ localStorage.removeItem('mess');
+ db=EMPTY_DB();
+ render();
+ if(cfg.url){
+  st('⏳ Fetching live data from Google Sheet…');
+  try{
+   const n=await cloudGet();
+   db=n;
+   const mKeys=Object.keys(db.months).sort();
+   if(mKeys.length&&!db.months[KEY()]){
+    const latest=mKeys[mKeys.length-1];
+    const[y,m]=latest.split('-').map(Number);
+    cur={y,m};sel=latest+'-01';
+   }
+   localStorage.setItem('mess',JSON.stringify(db));
+   render();
+   st(`✅ Loaded live from Google Sheet (${db.settings.friends.length} friends, ${Object.keys(db.months).length} months)`,'ok');
+  }catch(e){
+   db=EMPTY_DB();
+   render();
+   st('❌ Cannot reach Google Sheet: '+e.message,'err');
+  }
+ }else{
+  st('⚠ No Google Sheet URL configured · connect in Settings','warn');
+ }
+})();
 </script></body></html>
