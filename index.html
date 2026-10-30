@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mess Expense Splitter</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root{--bg:#0d1020;--card:#171b31;--line:#262b4a;--tx:#eceefb;--mu:#8e94b8;--ac:#7c6cff;--ok:#34d399;--wa:#fbbf24;--bad:#f87171}
+@media(prefers-color-scheme:light){:root{--bg:#f4f5fb;--card:#fff;--line:#dfe2f2;--tx:#1b1e36;--mu:#6a7094}}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(900px 500px at 10% -10%,#7c6cff33,transparent),var(--bg);color:var(--tx);font:14px/1.4 system-ui,Segoe UI,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:16px 20px;position:sticky;top:0;z-index:5;backdrop-filter:blur(12px);background:color-mix(in srgb,var(--bg) 80%,transparent);border-bottom:1px solid var(--line)}
+h1{font-size:18px;margin:0}.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+button,select,input{font:inherit;color:inherit}
+button{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:7px 12px;cursor:pointer}button:hover{border-color:var(--ac)}
+button.p{background:var(--ac);border-color:var(--ac);color:#fff}.tabs button.on{background:var(--ac);border-color:var(--ac);color:#fff}
+.pill{font-size:12px;color:var(--mu);padding:4px 10px;border:1px solid var(--line);border-radius:99px}
+main{padding:16px 20px;max-width:1300px;margin:auto}.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px}
+.wrap{overflow:auto;max-height:72vh;border:1px solid var(--line);border-radius:14px;background:var(--card)}
+table{border-collapse:separate;border-spacing:0;width:100%}th,td{padding:4px 6px;text-align:center;border-bottom:1px solid var(--line);white-space:nowrap}
+thead th{position:sticky;top:0;background:var(--card);z-index:2;font-weight:600}tfoot td{position:sticky;bottom:0;background:var(--card);font-weight:700}
+td:first-child,th:first-child{position:sticky;left:0;background:var(--card);text-align:left;z-index:1}
+tr.we td{color:var(--mu);background:color-mix(in srgb,var(--mu) 12%,var(--card))}tr.we a.lk{opacity:.7}tr.today td{background:color-mix(in srgb,var(--ac) 20%,var(--card))}
+td input{width:46px;text-align:center;background:transparent;border:1px solid transparent;border-radius:8px;padding:4px}td input:focus{outline:2px solid var(--ac)}
+td input.v0{color:var(--mu)}td input.v1{background:#34d39922;color:var(--ok)}td input.vn{background:#fbbf2433;color:var(--wa);font-weight:700}
+td input.g{width:78px}td input.nt{width:130px;text-align:left}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px;margin:14px 0}
+.big{font-size:24px;font-weight:700}.mu{color:var(--mu)}.ok{color:var(--ok)}.bad{color:var(--bad)}.r{text-align:right!important}
+.bar{height:6px;border-radius:9px;background:var(--line);margin-top:8px;overflow:hidden}.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--ac),#22d3ee)}
+.inp{background:transparent;border:1px solid var(--line);border-radius:10px;padding:7px 10px}
+li{list-style:none;display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line)}ul{padding:0;margin:0}
+.pill{cursor:pointer}.pill.ok{color:var(--ok);border-color:var(--ok)}.pill.warn{color:var(--wa);border-color:var(--wa)}.pill.err{color:#fff;background:var(--bad);border-color:var(--bad);font-weight:600}
+.lk{cursor:pointer;color:var(--ac);font-weight:600}.lk:hover{text-decoration:underline}
+.pg{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:14px;margin-top:14px}
+.pc{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:14px}.pc.on{border-color:var(--ac);box-shadow:0 0 0 1px var(--ac) inset}
+.pc h3{margin:0 0 8px;font-size:17px;cursor:pointer}.mr{display:flex;align-items:center;justify-content:space-between;padding:6px 0}
+.sp{display:flex;align-items:center;gap:8px}.sp button{width:40px;height:40px;border-radius:12px;font-size:22px;padding:0}.sp b{min-width:32px;text-align:center;font-size:22px;color:var(--mu)}.sp b.on{color:var(--ok)}.sp b.gn{color:var(--wa)}
+</style></head><body>
+<header><div class="row"><h1>🍛 Mess Expense Splitter</h1><span class="pill" id="st">Loading…</span></div>
+<div class="row"><button id="pm">‹</button><select id="mo"></select><button id="nm">›</button><button id="td">Today</button></div>
+<div class="row tabs"><button data-t="entry">✏️ Entry</button><button data-t="log">Daily Log</button><button data-t="split">Split</button><button data-t="set">Settings</button>
+<button id="op" class="p">📂 Open Excel</button><button id="ex">⬇ Export</button><input type="file" id="fi" accept=".xlsx" hidden></div></header>
+<main id="app"></main>
+<script>
+const $=s=>document.querySelector(s),pad=n=>String(n).padStart(2,'0'),esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const inr=n=>'₹'+n.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2}),dim=(y,m)=>new Date(y,m,0).getDate();
+const now=new Date(),ymd=d=>d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()),TK=ymd(now),addD=(s,n)=>{const d=new Date(s+'T12:00');d.setDate(d.getDate()+n);return ymd(d)},isWE=d=>[0,6].includes(new Date(d+'T12:00').getDay()),lbl=d=>new Date(d+'T12:00').toLocaleString('en',{weekday:'short',day:'2-digit',month:'short'});
+let cur={y:now.getFullYear(),m:now.getMonth()+1},tab='entry',ptab='entry',who='',sel=TK,method='equal',db,handle=null,tm,saving=false,again=false,bad=false,pend=false;
+const KEY=()=>cur.y+'-'+pad(cur.m);
+function newMonth(k){const[y,m]=k.split('-').map(Number),pv=Object.keys(db.months).filter(x=>x<k).sort().pop(),s=pv?db.months[pv]:db.settings,fr=db.settings.friends.filter(f=>f.active).map(f=>f.name);
+ return{fee:s.fee,lw:s.lw,dw:s.dw,friends:fr,rows:Array.from({length:dim(y,m)},(_,i)=>({d:`${k}-${pad(i+1)}`,g:0,v:fr.map(()=>[0,0]),note:''}))}}
+const ens=k=>db.months[k]||(db.months[k]=newMonth(k)),M=()=>ens(KEY());
+function calc(mo,meth){
+ const U=mo.friends.map((_,i)=>mo.rows.reduce((s,r)=>s+r.v[i][0]*mo.lw+r.v[i][1]*mo.dw,0)),T=U.reduce((a,b)=>a+b,0);
+ const G=Math.round(mo.rows.reduce((s,r)=>s+(+r.g||0),0)*100),F=Math.round(mo.fee*100);
+ const alloc=(tot,w)=>{const W=w.reduce((a,b)=>a+b,0);if(!W)return w.map(()=>0);const raw=w.map(x=>tot*x/W),fl=raw.map(Math.floor);let rem=tot-fl.reduce((a,b)=>a+b,0);
+  raw.map((x,i)=>[x-fl[i],i]).sort((a,b)=>b[0]-a[0]).forEach(([,i])=>{if(rem>0){fl[i]++;rem--}});return fl};
+ const gs=alloc(G,U),cs=meth==='equal'?alloc(F,U.map(()=>1)):alloc(F,U);
+ const rows=mo.friends.map((n,i)=>({n,l:mo.rows.reduce((s,r)=>s+r.v[i][0],0),d:mo.rows.reduce((s,r)=>s+r.v[i][1],0),u:U[i],g:gs[i]/100,c:cs[i]/100,t:(gs[i]+cs[i])/100}));
+ return{rows,G:G/100,F:F/100,T,sum:rows.reduce((s,r)=>s+Math.round(r.t*100),0)/100,days:mo.rows.length}}
+/* ---------- Excel I/O ---------- */
+const sAOA=()=>{const s=db.settings;return[['Cook Fee (₹)',s.fee,'Lunch Weight',s.lw,'Dinner Weight',s.dw],[],['Friend','Active'],...s.friends.map(f=>[f.name,f.active?1:0])]};
+const mAOA=k=>{const m=db.months[k],a=[['Cook Fee (₹)',m.fee,'Lunch Weight',m.lw,'Dinner Weight',m.dw],['Date','Grocery (₹)',...m.friends.flatMap(f=>[f,'']),'Notes'],['','',...m.friends.flatMap(()=>['Lunch','Dinner']),'']];m.rows.forEach(r=>a.push([r.d,r.g,...r.v.flat(),r.note]));return a};
+function toWB(){const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(sAOA()),'Settings');Object.keys(db.months).sort().forEach(k=>XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(mAOA(k)),k));return wb}
+function fromWB(wb){const S=XLSX.utils.sheet_to_json(wb.Sheets.Settings,{header:1,defval:''}),d={months:{},settings:{fee:+S[0][1],lw:+S[0][3],dw:+S[0][5],friends:S.slice(3).filter(r=>r[0]!=='').map(r=>({name:String(r[0]),active:+r[1]!==0}))}};
+ wb.SheetNames.filter(n=>/^\d{4}-\d{2}$/.test(n)).forEach(n=>{const A=XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,defval:''}),h=A[1],nm=[];
+  for(let c=2;c<h.length&&h[c]!=='Notes';c+=2)nm.push(String(h[c]));
+  d.months[n]={fee:+A[0][1],lw:+A[0][3],dw:+A[0][5],friends:nm,rows:A.slice(3).filter(r=>r[0]!=='').map(r=>({d:String(r[0]),g:+r[1]||0,v:nm.map((_,i)=>[+r[2+2*i]||0,+r[3+2*i]||0]),note:String(r[2+2*nm.length]||'')}))}});return d}
+const fromAOA=o=>fromWB({SheetNames:Object.keys(o),Sheets:Object.fromEntries(Object.entries(o).map(([k,a])=>[k,XLSX.utils.aoa_to_sheet(a)]))});
+const st=(t,k='')=>{const e=$('#st');e.textContent=t;e.className='pill '+(k||'')};
+let cfg={
+  url:'https://script.google.com/macros/s/AKfycby6tSSXyi3N1wvIZ25r8wRFkTr-mVXF2noufbBle16fM2XSaYRM04cOL0O6X7q8Hz3gsA/exec',
+  token:'mess-expense'
+};
+try{const saved=JSON.parse(localStorage.getItem('messcfg')); if(saved && saved.url) cfg=saved;}catch(e){}
+const touched=new Set();
+async function cloudGet(){const r=await fetch(cfg.url+'?token='+encodeURIComponent(cfg.token||'')),o=await r.json();if(o.error)throw new Error(o.error);return fromAOA(o)}
+async function save(){if(saving){again=true;return}saving=true;pend=false;let err='';
+ try{localStorage.setItem('mess',JSON.stringify(db))}catch(e){err='browser storage'}
+ if(cfg.url){const names=[...touched];touched.clear();if(names.length)try{const sheets={};names.forEach(n=>{if(n==='Settings')sheets[n]=sAOA();else if(db.months[n])sheets[n]=mAOA(n)});
+   const r=await fetch(cfg.url,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({token:cfg.token,sheets})}),o=await r.json();if(!o.ok)throw new Error(o.error||'rejected')}
+  catch(e){names.forEach(n=>touched.add(n));err='Google Sheet ('+(e.message||'network')+')'}}
+ else if(handle){try{const w=await handle.createWritable();await w.write(XLSX.write(toWB(),{bookType:'xlsx',type:'array'}));await w.close()}catch(e){err='Excel file ('+(e.name||'error')+') — is it open in Excel?'}}
+ saving=false;bad=!!err;const t=new Date().toLocaleTimeString();
+ if(err)st('❌ Save FAILED: '+err+' · click to retry','err');else if(cfg.url)st('✅ Saved to Google Sheet · '+t,'ok');else if(handle)st('✅ Saved to '+handle.name+' · '+t,'ok');else st('Ready · local draft active');
+ if(again){again=false;save()}}
+const dirty=all=>{if(all){Object.keys(db.months).forEach(k=>touched.add(k));touched.add('Settings')}else touched.add(KEY());if(tab==='set')touched.add('Settings');pend=true;st('Saving…');clearTimeout(tm);tm=setTimeout(save,400)};
+async function pull(){if(!cfg.url||pend||saving||touched.size||/INPUT|SELECT/.test(document.activeElement&&document.activeElement.tagName))return;
+ try{const n=await cloudGet(),J=JSON.stringify;if(J(n.settings)!==J(db.settings)||Object.keys(n.months).some(k=>J(n.months[k])!==J(db.months[k]))){db.settings=n.settings;Object.assign(db.months,n.months);render()}}catch(e){}}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)pull()});setInterval(pull,45000);
+$('#st').onclick=async()=>{if(handle)try{await handle.requestPermission({mode:'readwrite'})}catch(e){}save()};
+window.onbeforeunload=e=>{if(pend||bad||saving){e.preventDefault();e.returnValue=''}};
+function load(buf,name){db=fromWB(XLSX.read(buf));render();st('Loaded '+(name||'file'))}
+async function openFile(){if(window.showOpenFilePicker){try{const[h]=await showOpenFilePicker({types:[{accept:{'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':['.xlsx']}}]});await h.requestPermission({mode:'readwrite'});handle=h;load(await(await h.getFile()).arrayBuffer(),h.name);save()}catch(e){if(e.name!=='AbortError')st('❌ Could not open file: '+(e.message||e.name),'err')}}else $('#fi').click()}
+/* ---------- views ---------- */
+function monthOpts(){const ks=new Set(Object.keys(db.months));ks.add(KEY());for(let i=-1;i<=1;i++){const d=new Date(now.getFullYear(),now.getMonth()+i,1);ks.add(d.getFullYear()+'-'+pad(d.getMonth()+1))}
+ $('#mo').innerHTML=[...ks].sort().map(k=>{const[y,m]=k.split('-');return`<option value="${k}" ${k===KEY()?'selected':''}>${new Date(y,m-1).toLocaleString('en',{month:'long',year:'numeric'})}</option>`}).join('')}
+function foot(mo){const f=mo.friends.map((_,i)=>[0,1].map(j=>mo.rows.reduce((s,r)=>s+r.v[i][j],0)));return`<tr><td>TOTAL (${mo.rows.length} days)</td><td>${mo.rows.reduce((s,r)=>s+(+r.g||0),0)}</td>${f.map(p=>`<td>${p[0]}</td><td>${p[1]}</td>`).join('')}<td></td></tr>`}
+const cls=v=>v>1?'vn':v==1?'v1':'v0';
+const rowOf=d=>{const m=db.months[d.slice(0,7)],r=m&&m.rows.find(x=>x.d===d);return r?{m,r}:null};
+const srcOpts=t=>Array.from({length:7},(_,i)=>addD(t,-i-1)).map(d=>{const x=rowOf(d),has=x&&x.r.v.some(p=>p[0]||p[1]);return`<option value="${d}" ${has?'':'disabled'}>${lbl(d)}${has?'':' — no data'}</option>`}).join('');
+function copyDay(t,s){const a=rowOf(s);if(!a)return alert('No data on that day');const mo=ens(t.slice(0,7)),r=mo.rows.find(x=>x.d===t);if(!r)return;
+ mo.friends.forEach((n,i)=>{const j=a.m.friends.indexOf(n);r.v[i]=j<0?[0,0]:[...a.r.v[j]]});dirty()}
+function logView(){const mo=M(),t0=sel.startsWith(KEY())?sel:KEY()+'-01';
+ $('#app').innerHTML=`<div class="row" style="margin-bottom:10px">⚡ Quick fill <select class="inp" id="ct">${mo.rows.map(r=>`<option value="${r.d}" ${r.d===t0?'selected':''}>${lbl(r.d)}</option>`).join('')}</select> from <select class="inp" id="cs">${srcOpts(t0)}</select><button class="p" id="cg">Copy</button>
+ <span class="mu">Copies meals only (not grocery). Click a date to open that day · click a name for their history.</span></div>
+ <div class="wrap"><table><thead><tr><th>Date</th><th>Grocery ₹</th>${mo.friends.map(f=>`<th colspan="2" class="lk" data-p="${esc(f)}">${esc(f)}</th>`).join('')}<th>Notes</th></tr></thead><tbody>
+ ${mo.rows.map((r,i)=>`<tr class="${r.d===TK?'today':''} ${isWE(r.d)?'we':''}"><td><a class="lk" data-day="${r.d}">${lbl(r.d)}</a></td>
+ <td><input class="g ${r.g?'v1':'v0'}" type="number" min="0" data-r="${i}" data-k="g" value="${r.g}"></td>
+ ${r.v.map((p,j)=>p.map((x,k)=>`<td><input class="${cls(x)}" type="number" min="0" step="1" data-r="${i}" data-f="${j}" data-k="${k}" value="${x}"></td>`).join('')).join('')}
+ <td><input class="nt" data-r="${i}" data-k="n" value="${esc(r.note)}"></td></tr>`).join('')}</tbody><tfoot id="ft">${foot(mo)}</tfoot></table></div>`;
+ const t=$('tr.today');if(t)t.scrollIntoView({block:'center'});
+ $('#ct').onchange=e=>$('#cs').innerHTML=srcOpts(e.target.value);
+ $('#app .wrap').oninput=e=>{const x=e.target,r=mo.rows[x.dataset.r];if(!r)return;const k=x.dataset.k;
+  if(k==='n')r.note=x.value;else{const v=Math.max(0,+x.value||0);if(k==='g'){r.g=v;x.className='g '+(v?'v1':'v0')}else{r.v[x.dataset.f][k]=v;x.className=cls(v)}$('#ft').innerHTML=foot(mo)}dirty()}}
+function cardHTML(mo,r,i){const[l,d]=r.v[i],step=(k,v,t)=>`<div class="mr"><span>${t}</span><div class="sp"><button data-s="${i}" data-k="${k}" data-d="-1">−</button><b class="${v>1?'gn':v?'on':''}">${v}</b><button data-s="${i}" data-k="${k}" data-d="1">+</button></div></div>`;
+ return`<div class="pc ${l||d?'on':''}" id="c${i}"><h3 data-p="${esc(mo.friends[i])}">${esc(mo.friends[i])} <span class="mu" style="font-weight:400;font-size:12px">${l>1||d>1?'· with guests':''}</span></h3>${step(0,l,'🍛 Lunch')}${step(1,d,'🌙 Dinner')}</div>`}
+const sumLine=r=>$('#sm').textContent=`Lunches: ${r.v.reduce((s,p)=>s+p[0],0)} · Dinners: ${r.v.reduce((s,p)=>s+p[1],0)} · Tap a name to see their history`;
+function entryView(){const mo=ens(sel.slice(0,7)),r=mo.rows.find(x=>x.d===sel);
+ $('#app').innerHTML=`<div class="card"><div class="row"><button id="dp">‹</button><input type="date" class="inp" id="dd" value="${sel}"><button id="dn">›</button>
+ <b style="font-size:18px">${new Date(sel+'T12:00').toLocaleString('en',{weekday:'long',day:'numeric',month:'long'})}</b>${sel===TK?'<span class="pill ok">Today</span>':'<button id="tt">Go to today</button>'}</div>
+ <div class="row" style="margin-top:12px">Grocery ₹<input class="inp" type="number" min="0" id="gg" value="${r.g}" style="width:110px;font-size:18px"><span style="flex:1"></span>
+ Copy from<select class="inp" id="cs">${srcOpts(sel)}</select><button class="p" id="cp">Copy</button><button id="cl">Clear day</button></div></div>
+ <p class="mu" id="sm"></p><div class="pg">${mo.friends.map((_,i)=>cardHTML(mo,r,i)).join('')}</div>`;
+ $('#gg').oninput=e=>{r.g=Math.max(0,+e.target.value||0);dirty()};$('#dd').onchange=e=>{if(e.target.value){sel=e.target.value;render()}};sumLine(r)}
+const mealC=n=>n?'✓'+(n>1?' ×'+n:''):'–';
+function personView(){const mo=M(),i=mo.friends.indexOf(who),mt=$('#mo').selectedOptions[0].text;
+ if(i<0){$('#app').innerHTML=`<button id="bk">← Back</button><p class="mu">${esc(who)} has no entries in ${mt}.</p>`;return}
+ const c=calc(mo,method),p=c.rows[i],rate=c.T?c.G/c.T:0,days=mo.rows.filter(r=>r.v[i][0]||r.v[i][1]);
+ $('#app').innerHTML=`<div class="row"><button id="bk">← Back</button><h2 style="margin:0">${esc(who)}</h2><span class="mu">${mt}</span></div>
+ <div class="grid"><div class="card"><div class="mu">Meals</div><div class="big">${p.l}L + ${p.d}D</div><div class="mu">${days.length} days ate · ${mo.rows.length-days.length} days off</div></div>
+ <div class="card"><div class="mu">Grocery share</div><div class="big">${inr(p.g)}</div></div><div class="card"><div class="mu">Cook fee (${method==='equal'?'equal split':'by attendance'})</div><div class="big">${inr(p.c)}</div></div><div class="card"><div class="mu">Total owed</div><div class="big ok">${inr(p.t)}</div></div></div>
+ <div class="wrap"><table><thead><tr><th>Date</th><th>Lunch</th><th>Dinner</th><th>Units</th><th>Meal cost ₹</th></tr></thead><tbody>
+ ${days.map(r=>{const[l,d]=r.v[i],u=l*mo.lw+d*mo.dw;return`<tr class="${isWE(r.d)?'we':''}"><td><a class="lk" data-day="${r.d}">${lbl(r.d)}</a></td><td>${mealC(l)}</td><td>${mealC(d)}</td><td>${u}</td><td class="r">${inr(u*rate)}</td></tr>`}).join('')}</tbody>
+ <tfoot><tr><td>TOTAL</td><td>${p.l}</td><td>${p.d}</td><td>${p.u}</td><td class="r">${inr(p.u*rate)}</td></tr></tfoot></table></div>
+ <p class="mu">Meal cost = units × this month's average grocery cost per unit (${inr(rate)}). The cook fee is added on top in Total owed.</p>`}
+function splitView(){const mo=M(),c=calc(mo,method),mx=Math.max(...c.rows.map(r=>r.t),1),okSum=Math.abs(c.sum-(c.G+c.F))<0.005&&c.T>0;
+ $('#app').innerHTML=`<div class="row"><button class="${method==='equal'?'p':''}" data-m="equal">Equal cook fee</button><button class="${method==='att'?'p':''}" data-m="att">Cook fee by attendance</button>
+ <span class="mu">${method==='equal'?'Cook fee ÷ everyone equally · groceries by meals eaten':'Cook fee AND groceries both by meals eaten'}</span></div>
+ <div class="grid">${c.rows.map(r=>`<div class="card"><div class="mu"><a class="lk" data-p="${esc(r.n)}">${esc(r.n)}</a></div><div class="big">${inr(r.t)}</div><div class="mu">${r.l}L + ${r.d}D · ${r.u} units</div><div class="bar"><i style="width:${r.t/mx*100}%"></i></div></div>`).join('')}</div>
+ <div class="wrap"><table><thead><tr><th>Friend</th><th>Lunch</th><th>Dinner</th><th>Units</th><th>Grocery ₹</th><th>Cook fee ₹</th><th>Total ₹</th></tr></thead><tbody>
+ ${c.rows.map(r=>`<tr><td><a class="lk" data-p="${esc(r.n)}">${esc(r.n)}</a></td><td>${r.l}</td><td>${r.d}</td><td>${r.u}</td><td class="r">${inr(r.g)}</td><td class="r">${inr(r.c)}</td><td class="r"><b>${inr(r.t)}</b></td></tr>`).join('')}</tbody>
+ <tfoot><tr><td>TOTAL</td><td></td><td></td><td>${c.T}</td><td class="r">${inr(c.G)}</td><td class="r">${inr(c.F)}</td><td class="r">${inr(c.sum)}</td></tr></tfoot></table></div>
+ <div class="card" style="margin-top:14px"><b>Verification</b><ul>
+ <li><span>Days in this month</span><span>${c.days} (calendar: ${dim(cur.y,cur.m)}) <b class="${c.days===dim(cur.y,cur.m)?'ok':'bad'}">${c.days===dim(cur.y,cur.m)?'✓':'✗'}</b></span></li>
+ <li><span>Groceries + cook fee</span><span>${inr(c.G+c.F)}</span></li><li><span>Sum of everyone's share</span><span>${inr(c.sum)} <b class="${okSum?'ok':'bad'}">${okSum?'✓ matches':'✗ mismatch'}</b></span></li>
+ <li><span>Avg grocery cost / meal unit</span><span>${c.T?inr(c.G/c.T):'—'}</span></li></ul>${c.T?'':'<p class="bad">No meals logged yet — groceries cannot be split.</p>'}
+ <p class="mu">Shares are rounded to the paisa with the leftover paise handed out fairly, so the total always matches exactly.</p></div>`}
+function setView(){const mo=M(),s=db.settings;
+ $('#app').innerHTML=`<div class="card"><b>${$('#mo').selectedOptions[0].text} — cook fee & weights</b><p class="mu">Changes apply to this month only; new months copy the latest month.</p>
+ <div class="row">Cook fee ₹<input class="inp" type="number" id="fee" value="${mo.fee}" style="width:100px">Lunch weight<input class="inp" type="number" step="0.1" id="lw" value="${mo.lw}" style="width:70px">Dinner weight<input class="inp" type="number" step="0.1" id="dw" value="${mo.dw}" style="width:70px"></div></div>
+ <div class="card" style="margin-top:14px"><b>Friends (${s.friends.filter(f=>f.active).length} active)</b><ul>${s.friends.map((f,i)=>`<li><span class="${f.active?'':'mu'}">${esc(f.name)}${f.active?'':' (removed)'}</span><button data-x="${i}">${f.active?'Remove':'Re-add'}</button></li>`).join('')}</ul>
+ <div class="row" style="margin-top:12px"><input class="inp" id="nn" placeholder="New friend name"><button class="p" id="add">+ Add friend</button></div>
+ <p class="mu">Adding/removing updates the month you're viewing and all future months. Past months keep their original columns and data.</p></div>
+ <div class="card" style="margin-top:14px"><b>☁️ Cloud sync — Google Sheet</b><p class="mu">${cfg.url?'Connected: every edit saves to your Google Sheet, and changes from others appear automatically.':'Paste the Apps Script Web App URL and your passphrase (kept only in this browser).'}</p>
+ <div class="row"><input class="inp" id="cu" placeholder="https://script.google.com/macros/s/…/exec" style="flex:1;min-width:240px" value="${esc(cfg.url||'')}"><input class="inp" id="ck" type="password" placeholder="passphrase" value="${esc(cfg.token||'')}"><button class="p" id="cc">Connect & load</button>${cfg.url?'<button id="cd">Disconnect</button>':''}</div></div>`;
+ ['fee','lw','dw'].forEach(k=>$('#'+k).oninput=e=>{const v=+e.target.value||0;mo[k]=v;db.settings[k]=v;dirty()})}
+function render(){if(tab==='entry')cur={y:+sel.slice(0,4),m:+sel.slice(5,7)};monthOpts();document.querySelectorAll('.tabs [data-t]').forEach(b=>b.classList.toggle('on',b.dataset.t===(tab==='person'?ptab:tab)));({entry:entryView,log:logView,split:splitView,set:setView,person:personView})[tab]()}
+function friendOp(name,on){const mo=M(),f=db.settings.friends.find(x=>x.name===name),i=mo.friends.indexOf(name);
+ if(on){if(i<0){mo.friends.push(name);mo.rows.forEach(r=>r.v.push([0,0]))}}
+ else if(i>=0){if(mo.rows.some(r=>r.v[i][0]||r.v[i][1])&&!confirm(name+' has data this month. Removing deletes their columns for this month (past months stay intact). Continue?'))return false;mo.friends.splice(i,1);mo.rows.forEach(r=>r.v.splice(i,1))}
+ f.active=on;Object.keys(db.months).filter(k=>k>KEY()).forEach(k=>{const m=db.months[k],j=m.friends.indexOf(name);if(on&&j<0){m.friends.push(name);m.rows.forEach(r=>r.v.push([0,0]))}if(!on&&j>=0){m.friends.splice(j,1);m.rows.forEach(r=>r.v.splice(j,1))}});return true}
+document.addEventListener('click',e=>{const t=e.target,sb=t.closest('[data-s]');
+ if(sb){const mo=ens(sel.slice(0,7)),r=mo.rows.find(x=>x.d===sel),i=+sb.dataset.s,k=+sb.dataset.k;r.v[i][k]=Math.max(0,r.v[i][k]+ +sb.dataset.d);$('#c'+i).outerHTML=cardHTML(mo,r,i);sumLine(r);dirty();return}
+ const dy=t.closest('[data-day]');if(dy){sel=dy.dataset.day;tab='entry';render();scrollTo(0,0);return}
+ const pn=t.closest('[data-p]');if(pn){who=pn.dataset.p;if(tab!=='person')ptab=tab;tab='person';render();scrollTo(0,0);return}
+ const b=t.closest('button');if(!b)return;
+ if(b.dataset.t){tab=b.dataset.t;render()}else if(b.dataset.m){method=b.dataset.m;render()}
+ else if(b.id==='pm'||b.id==='nm'){cur.m+=b.id==='pm'?-1:1;if(cur.m<1){cur.m=12;cur.y--}if(cur.m>12){cur.m=1;cur.y++}sel=KEY()+'-'+pad(Math.min(+sel.slice(8),dim(cur.y,cur.m)));render()}
+ else if(b.id==='td'||b.id==='tt'){cur={y:now.getFullYear(),m:now.getMonth()+1};sel=TK;render()}
+ else if(b.id==='dp'||b.id==='dn'){sel=addD(sel,b.id==='dp'?-1:1);render()}
+ else if(b.id==='cp'){const s=$('#cs').value;if(s){copyDay(sel,s);render()}}
+ else if(b.id==='cg'){const s=$('#cs').value;if(s){copyDay($('#ct').value,s);render()}}
+ else if(b.id==='cl'){if(confirm('Clear lunch/dinner for this day?')){ens(sel.slice(0,7)).rows.find(x=>x.d===sel).v=M().friends.map(()=>[0,0]);dirty();render()}}
+ else if(b.id==='bk'){tab=ptab;render()}
+ else if(b.id==='cc'){const old=cfg;cfg={url:$('#cu').value.trim(),token:$('#ck').value};st('Connecting…');cloudGet().then(n=>{db=n;localStorage.setItem('messcfg',JSON.stringify(cfg));touched.clear();render();st('✅ Connected to Google Sheet','ok')}).catch(x=>{cfg=old;st('❌ Could not connect: '+x.message,'err')})}
+ else if(b.id==='cd'){cfg={};localStorage.removeItem('messcfg');render();st('Disconnected — browser copy only','warn')}
+ else if(b.id==='op')openFile();else if(b.id==='ex')XLSX.writeFile(toWB(),'expenses.xlsx');
+ else if(b.id==='add'){const n=$('#nn').value.trim();if(!n)return;const f=db.settings.friends.find(x=>x.name.toLowerCase()===n.toLowerCase());if(f&&f.active)return alert('Already exists');
+  if(f)friendOp(f.name,true);else{db.settings.friends.push({name:n,active:true});friendOp(n,true)}dirty(1);render()}
+ else if(b.dataset.x!==undefined){const f=db.settings.friends[b.dataset.x];if(friendOp(f.name,!f.active)){dirty(1);render()}}});
+$('#mo').onchange=e=>{const[y,m]=e.target.value.split('-').map(Number);cur={y,m};sel=KEY()+'-'+pad(Math.min(+sel.slice(8),dim(y,m)));render()};
+$('#fi').onchange=async e=>{const f=e.target.files[0];if(f)load(await f.arrayBuffer(),f.name)};
+(async()=>{try{const l=localStorage.getItem('mess');if(l)db=JSON.parse(l)}catch(e){}
+ if(cfg.url){try{db=await cloudGet();st('✅ Loaded from Google Sheet','ok')}catch(e){st('❌ Cannot reach Google Sheet: '+e.message+' — showing browser copy','err')}}
+ if(!db){try{const r=await fetch('expenses.xlsx');if(r.ok)db=fromWB(XLSX.read(await r.arrayBuffer()))}catch(e){}}
+ if(!db)db={settings:{fee:6000,lw:1,dw:1,friends:[]},months:{}};render();if(!cfg.url)st('Ready · local draft active');})();
+</script></body></html>
