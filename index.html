@@ -65,13 +65,20 @@ function fromWB(wb){const S=XLSX.utils.sheet_to_json(wb.Sheets.Settings,{header:
   d.months[n]={fee:+A[0][1],lw:+A[0][3],dw:+A[0][5],friends:nm,rows:A.slice(3).filter(r=>r[0]!=='').map(r=>({d:String(r[0]),g:+r[1]||0,v:nm.map((_,i)=>[+r[2+2*i]||0,+r[3+2*i]||0]),note:String(r[2+2*nm.length]||'')}))}});return d}
 const fromAOA=o=>fromWB({SheetNames:Object.keys(o),Sheets:Object.fromEntries(Object.entries(o).map(([k,a])=>[k,XLSX.utils.aoa_to_sheet(a)]))});
 const st=(t,k='')=>{const e=$('#st');e.textContent=t;e.className='pill '+(k||'')};
-let cfg={
-  url:'https://script.google.com/macros/s/AKfycby6tSSXyi3N1wvIZ25r8wRFkTr-mVXF2noufbBle16fM2XSaYRM04cOL0O6X7q8Hz3gsA/exec',
-  token:'mess-expense'
-};
+let cfg={};
 try{const saved=JSON.parse(localStorage.getItem('messcfg')); if(saved && saved.url) cfg=saved;}catch(e){}
 const touched=new Set();
-async function cloudGet(){const r=await fetch(cfg.url+'?token='+encodeURIComponent(cfg.token||'')),o=await r.json();if(o.error)throw new Error(o.error);return fromAOA(o)}
+async function cloudGet(){
+  if(!cfg.url) throw new Error('No Google Sheet URL configured');
+  const url=cfg.url+'?token='+encodeURIComponent(cfg.token||'');
+  const r=await fetch(url,{cache:'no-store'});
+  if(!r.ok) throw new Error('HTTP '+r.status);
+  const text=await r.text();
+  let o;
+  try{o=JSON.parse(text);}catch(e){throw new Error('Invalid JSON response');}
+  if(o && o.error) throw new Error(o.error);
+  return fromAOA(o);
+}
 async function save(){if(saving){again=true;return}saving=true;pend=false;let err='';
  try{localStorage.setItem('mess',JSON.stringify(db))}catch(e){err='browser storage'}
  if(cfg.url){const names=[...touched];touched.clear();if(names.length)try{const sheets={};names.forEach(n=>{if(n==='Settings')sheets[n]=sAOA();else if(db.months[n])sheets[n]=mAOA(n)});
@@ -179,7 +186,7 @@ document.addEventListener('click',e=>{const t=e.target,sb=t.closest('[data-s]');
 $('#mo').onchange=e=>{const[y,m]=e.target.value.split('-').map(Number);cur={y,m};sel=KEY()+'-'+pad(Math.min(+sel.slice(8),dim(y,m)));render()};
 $('#fi').onchange=async e=>{const f=e.target.files[0];if(f)load(await f.arrayBuffer(),f.name)};
 (async()=>{try{const l=localStorage.getItem('mess');if(l)db=JSON.parse(l)}catch(e){}
- if(cfg.url){try{db=await cloudGet();st('✅ Loaded from Google Sheet','ok')}catch(e){st('❌ Cannot reach Google Sheet: '+e.message+' — showing browser copy','err')}}
+ if(cfg.url){try{db=await cloudGet();st('✅ Loaded from Google Sheet','ok')}catch(e){console.warn('Google Sheet sync failed:', e); st('⚠ Google Sheet unavailable — browser copy is active'); }}
  if(!db){try{const r=await fetch('expenses.xlsx');if(r.ok)db=fromWB(XLSX.read(await r.arrayBuffer()))}catch(e){}}
  if(!db)db={settings:{fee:6000,lw:1,dw:1,friends:[]},months:{}};render();if(!cfg.url)st('Ready · local draft active');})();
 </script></body></html>
