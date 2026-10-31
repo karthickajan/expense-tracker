@@ -9,6 +9,8 @@
 header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:16px 20px;position:sticky;top:0;z-index:5;backdrop-filter:blur(12px);background:color-mix(in srgb,var(--bg) 80%,transparent);border-bottom:1px solid var(--line)}
 h1{font-size:18px;margin:0}.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 button,select,input{font:inherit;color:inherit}
+select{background:var(--card);color:var(--tx);border:1px solid var(--line);border-radius:10px;padding:7px 10px}
+option{background:var(--card);color:var(--tx)}
 button{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:7px 12px;cursor:pointer}button:hover{border-color:var(--ac)}
 button.p{background:var(--ac);border-color:var(--ac);color:#fff}.tabs button.on{background:var(--ac);border-color:var(--ac);color:#fff}
 .pill{font-size:12px;color:var(--mu);padding:4px 10px;border:1px solid var(--line);border-radius:99px}
@@ -32,299 +34,204 @@ li{list-style:none;display:flex;justify-content:space-between;padding:8px 0;bord
 .pc{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:14px}.pc.on{border-color:var(--ac);box-shadow:0 0 0 1px var(--ac) inset}
 .pc h3{margin:0 0 8px;font-size:17px;cursor:pointer}.mr{display:flex;align-items:center;justify-content:space-between;padding:6px 0}
 .sp{display:flex;align-items:center;gap:8px}.sp button{width:40px;height:40px;border-radius:12px;font-size:22px;padding:0}.sp b{min-width:32px;text-align:center;font-size:22px;color:var(--mu)}.sp b.on{color:var(--ok)}.sp b.gn{color:var(--wa)}
-.modal-bg{position:fixed;inset:0;background:#0008;display:flex;align-items:center;justify-content:center;z-index:50;backdrop-filter:blur(4px)}
-.modal{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px;max-width:420px;width:92%;box-shadow:0 20px 50px #000a}
+.sv{font-weight:600}.sv.d{background:var(--ok);border-color:var(--ok);color:#06281e;box-shadow:0 0 14px #34d39966}button:disabled{opacity:.55;cursor:default}
 </style></head><body>
 <header><div class="row"><h1>🍛 Mess Expense Splitter</h1><span class="pill" id="st">Loading…</span></div>
 <div class="row"><button id="pm">‹</button><select id="mo"></select><button id="nm">›</button><button id="td">Today</button></div>
 <div class="row tabs"><button data-t="entry">✏️ Entry</button><button data-t="log">Daily Log</button><button data-t="split">Split</button><button data-t="set">Settings</button>
-<button id="op" class="p">📂 Open Excel</button><button id="ex">⬇ Export</button><input type="file" id="fi" accept=".xlsx" hidden></div></header>
+<button id="saveBtn" class="sv" disabled>💾 Save</button><button id="rl" title="Reload from Google Sheet">🔄</button><a class="pill lk" id="sl" target="_blank" rel="noopener">📊 Sheet ↗️</a><button id="ex" title="Download a backup .xlsx">⬇ Backup</button><input type="file" id="fi" accept=".xlsx" hidden></div></header>
 <main id="app"></main>
-<div id="modal-root"></div>
 <script>
-/* ---------- Pre-configured Live Endpoint Credentials (No Hardcoded Sheet Data) ---------- */
-const DEFAULT_CFG = {
-  url: 'https://script.google.com/macros/s/AKfycbwxug3Sb56OyvTVAZKKaUHrPl0JCjH7_8m5rFruAXzGi1gSJNgAqzvnRjOyPEIAmfLCPw/exec',
-  token: 'mess-expense'
-};
-const OLD_URLS = [
-  'https://script.google.com/macros/s/AKfycbzp4KighWJxSl-MGV9cOjS9BhQExOgCWoasUDdNU6rd8nSc_d2Nut_INVXYiPsMnbhaNQ/exec'
-];
-
-const EMPTY_DB = () => ({ settings: { fee: 6000, lw: 1, dw: 1, friends: [] }, months: {} });
-let lastRawResponse = null;
-
 const $=s=>document.querySelector(s),pad=n=>String(n).padStart(2,'0'),esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const inr=n=>'₹'+n.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2}),dim=(y,m)=>new Date(y,m,0).getDate();
 const now=new Date(),ymd=d=>d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()),TK=ymd(now),addD=(s,n)=>{const d=new Date(s+'T12:00');d.setDate(d.getDate()+n);return ymd(d)},isWE=d=>[0,6].includes(new Date(d+'T12:00').getDay()),lbl=d=>new Date(d+'T12:00').toLocaleString('en',{weekday:'short',day:'2-digit',month:'short'});
-let cur={y:now.getFullYear(),m:now.getMonth()+1},tab='entry',ptab='entry',who='',sel=TK,method='equal',db,handle=null,tm,saving=false,again=false,bad=false,pend=false;
+let cur={y:now.getFullYear(),m:now.getMonth()+1},tab='entry',ptab='entry',who='',sel=TK,method='equal',db=null,saving=false,loaded=false;
 const KEY=()=>cur.y+'-'+pad(cur.m);
-
-/* Custom non-blocking UI message & confirmation helper */
-function showMsg(msg, onConfirm=null){
-  const root=$('#modal-root');
-  root.innerHTML=`<div class="modal-bg"><div class="modal"><p style="margin:0 0 16px;font-size:15px">${esc(msg)}</p><div class="row" style="justify-content:flex-end">${onConfirm?'<button id="m-cancel">Cancel</button><button class="p" id="m-ok">Continue</button>':'<button class="p" id="m-ok">OK</button>'}</div></div></div>`;
-  $('#m-ok').onclick=()=>{root.innerHTML='';if(onConfirm)onConfirm()};
-  if($('#m-cancel'))$('#m-cancel').onclick=()=>{root.innerHTML=''};
-}
-
 function newMonth(k){const[y,m]=k.split('-').map(Number),pv=Object.keys(db.months).filter(x=>x<k).sort().pop(),s=pv?db.months[pv]:db.settings,fr=db.settings.friends.filter(f=>f.active).map(f=>f.name);
- return{fee:s.fee,lw:s.lw,dw:s.dw,friends:fr,rows:Array.from({length:dim(y,m)},(_,i)=>({d:`${k}-${pad(i+1)}`,g:0,v:fr.map(()=>[0,0]),note:''}))}}
+return{fee:s.fee,lw:s.lw,dw:s.dw,friends:fr,rows:Array.from({length:dim(y,m)},(_,i)=>({d:`${k}-${pad(i+1)}`,g:0,v:fr.map(()=>[0,0]),note:''}))}}
 const ens=k=>db.months[k]||(db.months[k]=newMonth(k)),M=()=>ens(KEY());
 function calc(mo,meth){
- const U=mo.friends.map((_,i)=>mo.rows.reduce((s,r)=>s+r.v[i][0]*mo.lw+r.v[i][1]*mo.dw,0)),T=U.reduce((a,b)=>a+b,0);
- const G=Math.round(mo.rows.reduce((s,r)=>s+(+r.g||0),0)*100),F=Math.round(mo.fee*100);
- const alloc=(tot,w)=>{const W=w.reduce((a,b)=>a+b,0);if(!W)return w.map(()=>0);const raw=w.map(x=>tot*x/W),fl=raw.map(Math.floor);let rem=tot-fl.reduce((a,b)=>a+b,0);
-  raw.map((x,i)=>[x-fl[i],i]).sort((a,b)=>b[0]-a[0]).forEach(([,i])=>{if(rem>0){fl[i]++;rem--}});return fl};
- const gs=alloc(G,U),cs=meth==='equal'?alloc(F,U.map(()=>1)):alloc(F,U);
- const rows=mo.friends.map((n,i)=>({n,l:mo.rows.reduce((s,r)=>s+r.v[i][0],0),d:mo.rows.reduce((s,r)=>s+r.v[i][1],0),u:U[i],g:gs[i]/100,c:cs[i]/100,t:(gs[i]+cs[i])/100}));
- return{rows,G:G/100,F:F/100,T,sum:rows.reduce((s,r)=>s+Math.round(r.t*100),0)/100,days:mo.rows.length}}
-
+const U=mo.friends.map((_,i)=>mo.rows.reduce((s,r)=>s+r.v[i][0]*mo.lw+r.v[i][1]*mo.dw,0)),T=U.reduce((a,b)=>a+b,0);
+const G=Math.round(mo.rows.reduce((s,r)=>s+(+r.g||0),0)*100),F=Math.round(mo.fee*100);
+const alloc=(tot,w)=>{const W=w.reduce((a,b)=>a+b,0);if(!W)return w.map(()=>0);const raw=w.map(x=>tot*x/W),fl=raw.map(Math.floor);let rem=tot-fl.reduce((a,b)=>a+b,0);
+ raw.map((x,i)=>[x-fl[i],i]).sort((a,b)=>b[0]-a[0]).forEach(([,i])=>{if(rem>0){fl[i]++;rem--}});return fl};
+const gs=alloc(G,U),cs=meth==='equal'?alloc(F,U.map(()=>1)):alloc(F,U);
+const rows=mo.friends.map((n,i)=>({n,l:mo.rows.reduce((s,r)=>s+r.v[i][0],0),d:mo.rows.reduce((s,r)=>s+r.v[i][1],0),u:U[i],g:gs[i]/100,c:cs[i]/100,t:(gs[i]+cs[i])/100}));
+return{rows,G:G/100,F:F/100,T,sum:rows.reduce((s,r)=>s+Math.round(r.t*100),0)/100,days:mo.rows.length}}
 /* ---------- Excel I/O ---------- */
 const sAOA=()=>{const s=db.settings;return[['Cook Fee (₹)',s.fee,'Lunch Weight',s.lw,'Dinner Weight',s.dw],[],['Friend','Active'],...s.friends.map(f=>[f.name,f.active?1:0])]};
 const mAOA=k=>{const m=db.months[k],a=[['Cook Fee (₹)',m.fee,'Lunch Weight',m.lw,'Dinner Weight',m.dw],['Date','Grocery (₹)',...m.friends.flatMap(f=>[f,'']),'Notes'],['','',...m.friends.flatMap(()=>['Lunch','Dinner']),'']];m.rows.forEach(r=>a.push([r.d,r.g,...r.v.flat(),r.note]));return a};
 function toWB(){const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(sAOA()),'Settings');Object.keys(db.months).sort().forEach(k=>XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(mAOA(k)),k));return wb}
+const num=(v,d=0)=>{const n=parseFloat(String(v).replace(/,/g,'').trim());return isFinite(n)?n:d};
 function fromWB(wb){
- const def=EMPTY_DB();
- const sSheet=wb.Sheets&&(wb.Sheets.Settings||wb.Sheets.settings);
- const S=sSheet?XLSX.utils.sheet_to_json(sSheet,{header:1,defval:''}):[];
- const hasS=S.length>0&&S[0]&&S[0].length>=2;
- const d={months:{},settings:hasS?{fee:+S[0][1]||6000,lw:+S[0][3]||1,dw:+S[0][5]||1,friends:S.slice(3).filter(r=>r&&r[0]!==''&&r[0]!==undefined).map(r=>({name:String(r[0]),active:+r[1]!==0}))}:def.settings};
- (wb.SheetNames||[]).filter(n=>/^\d{4}-\d{2}$/.test(n)).forEach(n=>{const A=XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,defval:''});if(!A||A.length<2)return;const h=A[1]||[],nm=[];
-  for(let c=2;c<h.length&&h[c]!=='Notes';c+=2)if(h[c]!=='')nm.push(String(h[c]));
-  d.months[n]={fee:+(A[0]&&A[0][1])||d.settings.fee,lw:+(A[0]&&A[0][3])||d.settings.lw,dw:+(A[0]&&A[0][5])||d.settings.dw,friends:nm,rows:A.slice(3).filter(r=>r&&r[0]!=='').map(r=>{
-   let dt=r[0];if(typeof dt==='string'&&dt.includes('T'))dt=dt.slice(0,10);
-   return{d:String(dt),g:+r[1]||0,v:nm.map((_,i)=>[+r[2+2*i]||0,+r[3+2*i]||0]),note:String(r[2+2*nm.length]||'')}
-  })}});return d}
+const mk=wb.SheetNames.filter(n=>/^\d{4}-\d{2}$/.test(n)),E={settings:{fee:0,lw:1,dw:1,friends:[]},months:{}};
+if(!wb.Sheets.Settings&&!mk.length)return E;
+if(!wb.Sheets.Settings)throw new Error('The "Settings" tab is missing in the Google Sheet. Nothing was changed.');
+const S=XLSX.utils.sheet_to_json(wb.Sheets.Settings,{header:1,defval:''});
+if(S.every(r=>r.every(c=>c===''))&&!mk.length)return E;
+if(!String((S[0]||[])[0]).startsWith('Cook Fee'))throw new Error('Settings tab layout not recognised (A1 must be "Cook Fee (₹)"). Nothing was changed — fix the tab or restore it from File → Version history.');
+const d={months:{},stray:{},settings:{fee:num(S[0][1]),lw:num(S[0][3],1),dw:num(S[0][5],1),friends:S.slice(3).filter(r=>String(r[0]).trim()!=='').map(r=>({name:String(r[0]).trim(),active:num(r[1],1)!==0}))}};
+mk.forEach(n=>{const A=XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,defval:''}),h=A[1]||[],nm=[],by={};
+ for(let c=2;c<h.length&&h[c]!=='Notes';c+=2)nm.push(String(h[c]).trim());
+ A.slice(3).forEach(r=>{const dt=String(r[0]).trim().slice(0,10);if(/^\d{4}-\d{2}-\d{2}$/.test(dt)&&!dt.startsWith(n))(d.stray[n]=d.stray[n]||[]).push(dt);else if(/^\d{4}-\d{2}-\d{2}$/.test(dt))by[dt]={d:dt,g:num(r[1]),v:nm.map((_,i)=>[num(r[2+2*i]),num(r[3+2*i])]),note:String(r[2+2*nm.length]||'')}});
+ const[y,m]=n.split('-').map(Number),H=A[0]||[];
+ d.months[n]={fee:num(H[1],d.settings.fee),lw:num(H[3],d.settings.lw),dw:num(H[5],d.settings.dw),friends:nm,rows:Array.from({length:dim(y,m)},(_,i)=>{const dt=n+'-'+pad(i+1);return by[dt]||{d:dt,g:0,v:nm.map(()=>[0,0]),note:''}})}});
+return d}
 const fromAOA=o=>fromWB({SheetNames:Object.keys(o),Sheets:Object.fromEntries(Object.entries(o).map(([k,a])=>[k,XLSX.utils.aoa_to_sheet(a)]))});
-
-/* Universal normalizer: handles {settings, months}, {sheets: {...}}, or AOA {Settings: [...], "2026-10": [...]} */
-function normalizeCloudData(j){
- if(!j||typeof j!=='object')return EMPTY_DB();
- if(j.data&&typeof j.data==='object'&&!Array.isArray(j.data))j=j.data;
- if(j.sheets&&typeof j.sheets==='object')return fromAOA(j.sheets);
- if(j.Settings||Object.keys(j).some(k=>/^\d{4}-\d{2}$/.test(k)))return fromAOA(j);
- if(j.settings||j.months){
-  let settings=EMPTY_DB().settings;
-  if(Array.isArray(j.settings)){
-   const S=j.settings;
-   if(S.length&&S[0])settings={fee:+S[0][1]||6000,lw:+S[0][3]||1,dw:+S[0][5]||1,friends:S.slice(3).filter(r=>r&&r[0]!=='').map(r=>({name:String(r[0]),active:+r[1]!==0}))};
-  }else if(j.settings&&typeof j.settings==='object'){
-   const s=j.settings;
-   const fr=Array.isArray(s.friends)?s.friends.map(f=>typeof f==='string'?{name:f,active:true}:{name:String(f.name||''),active:f.active!==false&&f.active!==0}).filter(f=>f.name):[];
-   settings={fee:+(s.fee??s.cookFee??6000),lw:+(s.lw??s.lunchWeight??1),dw:+(s.dw??s.dinnerWeight??1),friends:fr};
-  }
-  const months={};
-  if(j.months&&typeof j.months==='object'){
-   Object.entries(j.months).forEach(([k,m])=>{
-    if(!/^\d{4}-\d{2}$/.test(k)||!m)return;
-    if(Array.isArray(m)){
-     const parsed=fromAOA({Settings:sAOA(),[k]:m});
-     if(parsed.months[k])months[k]=parsed.months[k];
-    }else if(typeof m==='object'){
-     const[y,moNum]=k.split('-').map(Number);
-     const fr=Array.isArray(m.friends)&&m.friends.length?m.friends.map(f=>typeof f==='string'?f:f.name):settings.friends.filter(f=>f.active).map(f=>f.name);
-     const rawRows=Array.isArray(m.rows)?m.rows:Array.isArray(m.days)?m.days:[];
-     const rows=rawRows.length?rawRows.map((r,idx)=>{
-      let vArr=fr.map(()=>[0,0]);
-      if(Array.isArray(r.v)){
-       vArr=fr.map((_,i)=>Array.isArray(r.v[i])?[+r.v[i][0]||0,+r.v[i][1]||0]:[0,0]);
-      }else if(r.meals&&typeof r.meals==='object'){
-       vArr=fr.map((fn,i)=>{const mv=r.meals[fn]??r.meals[i];return Array.isArray(mv)?[+mv[0]||0,+mv[1]||0]:mv&&typeof mv==='object'?[+(mv.l??mv.lunch??0),+(mv.d??mv.dinner??0)]:[0,0]});
-      }
-      return{
-       d:String((r.d||r.date||`${k}-${pad(idx+1)}`)).slice(0,10),
-       g:+(r.g??r.grocery??0)||0,
-       v:vArr,
-       note:String(r.note??r.notes??'')
-      };
-     }):Array.from({length:dim(y,moNum)},(_,i)=>({d:`${k}-${pad(i+1)}`,g:0,v:fr.map(()=>[0,0]),note:''}));
-     months[k]={fee:+(m.fee??settings.fee),lw:+(m.lw??settings.lw),dw:+(m.dw??settings.dw),friends:fr,rows};
-    }
-   });
-  }
-  return{settings,months};
- }
- return EMPTY_DB();
-}
-
+const SCRIPT_URL='https://script.google.com/macros/s/AKfycbwJqeKsRzgfidJ3Wp91JpfcbQlq39mcZHT2XHzw7MMaj7Mk0vUEPfp5OQG_PCKDknw/exec',SHEET_URL='https://docs.google.com/spreadsheets/d/1K3vhbBcsd315PuYq5lnnTs-wv3Jtt_PsnC70n53u3oA/edit';
+$('#sl').href=SHEET_URL;
+let cfg={url:SCRIPT_URL,token:''},rev={},lastErr='';const touched=new Set();
+try{const s=JSON.parse(localStorage.getItem('messcfg')||'{}');cfg.token=s.token||'';if(s.base===SCRIPT_URL&&s.url)cfg.url=s.url}catch(e){}
+const saveCfg=()=>{try{localStorage.setItem('messcfg',JSON.stringify({token:cfg.token,url:cfg.url,base:SCRIPT_URL}))}catch(e){}};
 const st=(t,k='')=>{const e=$('#st');e.textContent=t;e.className='pill '+k};
-
-let cfg = {...DEFAULT_CFG};
-try{
-  const savedCfg = JSON.parse(localStorage.getItem('messcfg'));
-  if(savedCfg && savedCfg.url && !OLD_URLS.includes(savedCfg.url.trim())) {
-    cfg = savedCfg;
-  } else {
-    localStorage.setItem('messcfg', JSON.stringify(cfg));
-  }
-}catch(e){}
-
-const touched=new Set();
-const net=async(u,o={},ms=25000)=>{let t;const to=new Promise((_,rj)=>t=setTimeout(()=>rj(new Error('TIMEOUT')),ms));
- try{const r=await Promise.race([fetch(u,o),to]),x=await Promise.race([r.text(),to]);let j;
-  try{j=JSON.parse(x)}catch(e){throw new Error('Script returned a web page, not JSON (HTTP '+r.status+'). Ensure the script is attached to a native Google Sheet and deployed as Execute as: Me / Access: Anyone.')}
-  if(j&&j.error)throw new Error(j.error);
-  return j}
- catch(e){throw e.message==='TIMEOUT'?new Error('Timed out after '+ms/1000+' s — check your network connection'):(e instanceof TypeError||/failed to fetch|network|load failed/i.test(e.message))?new Error('Failed to fetch from Apps Script (Ensure Web App access is set to "Anyone" and the spreadsheet is a native Google Sheet).'):e}
- finally{clearTimeout(t)}};
-async function cloudGet(){
- const raw=await net(cfg.url+(cfg.url.includes('?')?'&':'?')+'token='+encodeURIComponent(cfg.token||''));
- lastRawResponse=raw;
- return normalizeCloudData(raw);
-}
-async function save(){if(saving){again=true;return}saving=true;pend=false;let err='';
- try{localStorage.setItem('mess',JSON.stringify(db))}catch(e){err='browser storage'}
- if(cfg.url){const names=[...touched];touched.clear();if(names.length)try{
-   const sheets={};
-   names.forEach(n=>{if(n==='Settings')sheets[n]=sAOA();else if(db.months[n])sheets[n]=mAOA(n)});
-   const allSheets={Settings:sAOA()};
-   Object.keys(db.months).forEach(k=>{allSheets[k]=mAOA(k)});
-   const payload={token:cfg.token,sheets,allSheets,settings:db.settings,months:db.months,data:db};
-   const o=await net(cfg.url,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify(payload)},30000);
-   if(o&&o.ok===false&&o.error)throw new Error(o.error)}
-  catch(e){names.forEach(n=>touched.add(n));err='Google Sheet ('+(e.message||'network')+')'}}
- else if(handle){try{const w=await handle.createWritable();await w.write(XLSX.write(toWB(),{bookType:'xlsx',type:'array'}));await w.close()}catch(e){err='Excel file ('+(e.name||'error')+') — is it open in Excel?'}}
- saving=false;bad=!!err;const t=new Date().toLocaleTimeString();
- if(err)st('❌ Save FAILED: '+err+' · click to retry','err');else if(cfg.url)st('✅ Saved to Google Sheet · '+t,'ok');else if(handle)st('✅ Saved to '+handle.name+' · '+t,'ok');else st('⚠ Saved in browser only · connect Google Sheet in Settings','warn');
- if(again){again=false;save()}}
-const dirty=all=>{if(all){Object.keys(db.months).forEach(k=>touched.add(k));touched.add('Settings')}else touched.add(KEY());if(tab==='set')touched.add('Settings');pend=true;st('Saving…');clearTimeout(tm);tm=setTimeout(save,400)};
-async function pull(){if(!cfg.url||pend||saving||touched.size||/INPUT|SELECT/.test(document.activeElement&&document.activeElement.tagName))return;
- try{const n=await cloudGet(),J=JSON.stringify;
-  if(n.settings&&n.settings.friends&&n.settings.friends.length&&Object.keys(n.months||{}).length){
-   if(J(n.settings)!==J(db.settings)||Object.keys(n.months).some(k=>J(n.months[k])!==J(db.months[k]))){db.settings=n.settings;Object.assign(db.months,n.months);render()}
-  }}catch(e){}}
-document.addEventListener('visibilitychange',()=>{if(!document.hidden)pull()});setInterval(pull,45000);
-$('#st').onclick=async()=>{if(handle)try{await handle.requestPermission({mode:'readwrite'})}catch(e){}save()};
-window.onbeforeunload=e=>{if(pend||bad||saving){e.preventDefault();e.returnValue=''}};
-function load(buf,name){db=fromWB(XLSX.read(buf));render();st('Loaded '+(name||'file'),'ok')}
-async function openFile(){if(window.showOpenFilePicker){try{const[h]=await showOpenFilePicker({types:[{accept:{'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':['.xlsx']}}]});await h.requestPermission({mode:'readwrite'});handle=h;load(await(await h.getFile()).arrayBuffer(),h.name);save()}catch(e){if(e.name!=='AbortError')st('❌ Could not open file: '+(e.message||e.name),'err')}}else $('#fi').click()}
-
-/* ---------- Views ---------- */
+function btn(){const b=$('#saveBtn'),n=touched.size;b.disabled=saving||!n||!loaded;b.classList.toggle('d',n>0&&!saving);b.textContent=saving?'⏳ Saving…':n?'💾 Save changes':'💾 Save'}
+const xhr=(u,o,ms)=>new Promise((res,rej)=>{const x=new XMLHttpRequest();x.open(o.method||'GET',u);x.timeout=ms;for(const k in(o.headers||{}))x.setRequestHeader(k,o.headers[k]);
+x.onload=()=>res({status:x.status,text:x.responseText});x.onerror=()=>rej(new TypeError('xhr'));x.ontimeout=()=>rej(new Error('TIMEOUT'));x.send(o.body||null)});
+const viaFetch=(u,o,ms)=>Promise.race([fetch(u,o).then(async r=>({status:r.status,text:await r.text()})),new Promise((_,rj)=>setTimeout(()=>rj(new Error('TIMEOUT')),ms))]);
+const net=async(u,o={},ms=25000)=>{
+try{let r;try{r=await xhr(u,o,ms)}catch(e){if(o.method||e.message==='TIMEOUT')throw e;r=await viaFetch(u,o,ms)}
+ let j;try{j=JSON.parse(r.text)}catch(e){throw new Error('Script returned a web page, not data (HTTP '+r.status+'). Deployment must be: Execute as Me · Access Anyone · latest version.')}
+ if(j.error)throw Object.assign(new Error(j.error),{data:j});return j}
+catch(e){if(e.message==='TIMEOUT')throw new Error('Timed out after '+ms/1000+' s');if(e.data)throw e;
+ if(e instanceof TypeError||/failed to fetch|network|load failed/i.test(e.message))throw new Error('The browser blocked the request (the script itself is fine). Try an InPrivate window, another browser, or mobile data — and press F12 → Console for the exact reason.');throw e}};
+const getSheet=()=>net(cfg.url+'?token='+encodeURIComponent(cfg.token)+'&_='+Date.now());
+const post=(b,ms)=>net(cfg.url,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({token:cfg.token,...b})},ms);
+async function loadSheet(){
+if(!cfg.url||!cfg.token){db=null;loaded=false;render();return}
+st('⏳ Loading from Google Sheet…','warn');
+try{const o=await getSheet();if(!o.sheets||!o.rev)throw new Error('The script is outdated — paste the latest Code.gs and deploy a New version.');
+ db=fromAOA(o.sheets);rev=o.rev;touched.clear();loaded=true;lastErr=''}
+catch(e){db=null;loaded=false;lastErr=e.message;render();st('❌ Load failed','err');return}
+render();st('✅ Loaded from Google Sheet · '+new Date().toLocaleTimeString(),'ok')}
+async function save(){
+if(!loaded||saving||!touched.size)return;
+const sk=Object.keys(db.stray||{}).filter(n=>touched.has(n));if(sk.length){st('❌ Not saved: tab '+sk.join(', ')+' has rows dated outside its month — fix the dates in the sheet or import your backup first.','err');return}
+saving=true;btn();st('⏳ Saving…','warn');
+const names=[...touched],sheets={},base={};
+names.forEach(n=>{if(n==='Settings')sheets[n]=sAOA();else if(db.months[n])sheets[n]=mAOA(n);base[n]=rev[n]||''});
+try{const o=await post({action:'save',sheets,base},40000);if(!o.ok)throw new Error('The script did not confirm the save');
+ names.forEach(n=>touched.delete(n));
+ const v=await getSheet(),back=fromAOA(v.sheets),J=JSON.stringify,diff=names.filter(n=>n==='Settings'?J(back.settings)!==J(db.settings):J(back.months[n])!==J(db.months[n]));
+ rev=v.rev;
+ if(diff.length)st('⚠ Saved, but the sheet differs for '+diff.join(', ')+' — press 🔄 to see its version','warn');else st('✅ Saved & verified · '+new Date().toLocaleTimeString(),'ok')}
+catch(e){
+ if(e.data&&e.data.conflicts){st('❌ Not saved — the sheet was changed by someone else','err');
+  if(confirm('Someone else changed: '+e.data.conflicts.join(', ')+'\nReload their version now? Your unsaved edits will be discarded.')){saving=false;touched.clear();await loadSheet();return}}
+ else st('❌ Save FAILED: '+e.message,'err')}
+saving=false;btn()}
+const dirty=all=>{if(!loaded)return;
+if(all)Object.keys(db.months).filter(k=>k>=KEY()&&(k===KEY()||rev[k]!==undefined)).forEach(k=>touched.add(k));else touched.add(KEY());
+if(all||tab==='set')touched.add('Settings');btn();st('⚠ Unsaved changes — click 💾 Save','warn')};
+async function runTest(){const el=$('#tr'),L=[],P=(ok,t)=>{L.push((ok===null?'ℹ️ ':ok?'✅ ':'❌ ')+t);el.textContent=L.join('\n')};
+const u=$('#cu'),k=$('#ck');if(u&&u.value)cfg.url=u.value.trim();if(k&&k.value)cfg.token=k.value;saveCfg();P(null,'Testing script …'+cfg.url.slice(-14));
+try{const o=await getSheet();if(!o.sheets||!o.rev)return P(false,'Read works but the script is outdated — paste the latest Code.gs and deploy a New version.');
+ P(true,'Read OK — tabs: '+(Object.keys(o.sheets).join(', ')||'none'));const d=fromAOA(o.sheets);P(true,'Parsed: '+d.settings.friends.length+' friends, '+Object.keys(d.months).length+' month(s)')}
+catch(e){return P(false,'Read/parse failed: '+e.message)}
+try{const o=await post({action:'selftest'});P(!!o.ok,'Write test on a scratch tab (created, verified, deleted): '+(o.ok?'OK — your data was not touched':'failed'))}
+catch(e){P(false,'Write test failed: '+e.message)}}
+async function importXlsx(f){
+if(!loaded)return alert('Connect to the Google Sheet first.');
+try{const d=fromWB(XLSX.read(await f.arrayBuffer()));if(!d.settings.friends.length&&!Object.keys(d.months).length)return alert('That file contains no data.');
+ if(!confirm('Replace what is on screen with this file?\nNothing is written to the Google Sheet until you click 💾 Save.'))return;
+ db=d;touched.clear();touched.add('Settings');Object.keys(db.months).forEach(k=>touched.add(k));render();st('📂 Imported — review, then click 💾 Save','warn')}
+catch(e){alert('Import failed: '+e.message)}}
+function connectView(){$('#app').innerHTML=`<div class="card" style="max-width:640px;margin:auto"><h2 style="margin-top:0">${cfg.token?'Could not load your Google Sheet':'Connect to your Google Sheet'}</h2>
+${lastErr?`<p class="bad">${esc(lastErr)}</p>`:'<p class="mu">Enter the passphrase once on this device. All data is read from the sheet — nothing is cached or hard-coded.</p>'}
+<div class="row"><input class="inp" id="cu" style="flex:1;min-width:260px" placeholder="Apps Script Web App URL" value="${esc(cfg.url)}"><input class="inp" id="ck" type="password" placeholder="Passphrase" value="${esc(cfg.token)}"></div>
+<div class="row" style="margin-top:10px"><button class="p" id="cc">Connect & load</button><button id="tst">🩺 Run connection test</button></div><pre id="tr" class="mu" style="white-space:pre-wrap"></pre></div>`}
+function warnStray(){const k=Object.keys(db.stray||{});if(k.length)$('#app').insertAdjacentHTML('afterbegin','<div class="card" style="border-color:var(--bad);margin-bottom:14px">⚠ <b>Date problem in the sheet:</b> tab '+k.map(esc).join(', ')+' has rows dated outside its month (e.g. '+esc(db.stray[k[0]][0])+'). They are not shown here, and Save is blocked for that tab. Fix the dates in the sheet, or use Settings → Import .xlsx with your backup.</div>')}
+window.onbeforeunload=e=>{if(touched.size||saving){e.preventDefault();e.returnValue=''}};
+$('#st').onclick=()=>{if(touched.size)save();else if(!loaded)loadSheet()};
 function monthOpts(){const ks=new Set(Object.keys(db.months));ks.add(KEY());for(let i=-1;i<=1;i++){const d=new Date(now.getFullYear(),now.getMonth()+i,1);ks.add(d.getFullYear()+'-'+pad(d.getMonth()+1))}
- $('#mo').innerHTML=[...ks].sort().map(k=>{const[y,m]=k.split('-');return`<option value="${k}" ${k===KEY()?'selected':''}>${new Date(y,m-1).toLocaleString('en',{month:'long',year:'numeric'})}</option>`}).join('')}
+$('#mo').innerHTML=[...ks].sort().map(k=>{const[y,m]=k.split('-');return`<option value="${k}" ${k===KEY()?'selected':''}>${new Date(y,m-1).toLocaleString('en',{month:'long',year:'numeric'})}</option>`}).join('')}
 function foot(mo){const f=mo.friends.map((_,i)=>[0,1].map(j=>mo.rows.reduce((s,r)=>s+r.v[i][j],0)));return`<tr><td>TOTAL (${mo.rows.length} days)</td><td>${mo.rows.reduce((s,r)=>s+(+r.g||0),0)}</td>${f.map(p=>`<td>${p[0]}</td><td>${p[1]}</td>`).join('')}<td></td></tr>`}
 const cls=v=>v>1?'vn':v==1?'v1':'v0';
 const rowOf=d=>{const m=db.months[d.slice(0,7)],r=m&&m.rows.find(x=>x.d===d);return r?{m,r}:null};
 const srcOpts=t=>Array.from({length:7},(_,i)=>addD(t,-i-1)).map(d=>{const x=rowOf(d),has=x&&x.r.v.some(p=>p[0]||p[1]);return`<option value="${d}" ${has?'':'disabled'}>${lbl(d)}${has?'':' — no data'}</option>`}).join('');
-function copyDay(t,s){const a=rowOf(s);if(!a)return showMsg('No data on that day');const mo=ens(t.slice(0,7)),r=mo.rows.find(x=>x.d===t);if(!r)return;
- mo.friends.forEach((n,i)=>{const j=a.m.friends.indexOf(n);r.v[i]=j<0?[0,0]:[...a.r.v[j]]});dirty()}
+function copyDay(t,s){const a=rowOf(s);if(!a)return alert('No data on that day');const mo=ens(t.slice(0,7)),r=mo.rows.find(x=>x.d===t);if(!r)return;
+mo.friends.forEach((n,i)=>{const j=a.m.friends.indexOf(n);r.v[i]=j<0?[0,0]:[...a.r.v[j]]});dirty()}
 function logView(){const mo=M(),t0=sel.startsWith(KEY())?sel:KEY()+'-01';
- $('#app').innerHTML=`<div class="row" style="margin-bottom:10px">⚡ Quick fill <select class="inp" id="ct">${mo.rows.map(r=>`<option value="${r.d}" ${r.d===t0?'selected':''}>${lbl(r.d)}</option>`).join('')}</select> from <select class="inp" id="cs">${srcOpts(t0)}</select><button class="p" id="cg">Copy</button>
- <span class="mu">Copies meals only (not grocery). Click a date to open that day · click a name for their history.</span></div>
- <div class="wrap"><table><thead><tr><th>Date</th><th>Grocery ₹</th>${mo.friends.map(f=>`<th colspan="2" class="lk" data-p="${esc(f)}">${esc(f)}</th>`).join('')}<th>Notes</th></tr></thead><tbody>
- ${mo.rows.map((r,i)=>`<tr class="${r.d===TK?'today':''} ${isWE(r.d)?'we':''}"><td><a class="lk" data-day="${r.d}">${lbl(r.d)}</a></td>
- <td><input class="g ${r.g?'v1':'v0'}" type="number" min="0" data-r="${i}" data-k="g" value="${r.g}"></td>
- ${r.v.map((p,j)=>p.map((x,k)=>`<td><input class="${cls(x)}" type="number" min="0" step="1" data-r="${i}" data-f="${j}" data-k="${k}" value="${x}"></td>`).join('')).join('')}
- <td><input class="nt" data-r="${i}" data-k="n" value="${esc(r.note)}"></td></tr>`).join('')}</tbody><tfoot id="ft">${foot(mo)}</tfoot></table></div>`;
- const t=$('tr.today');if(t)t.scrollIntoView({block:'center'});
- $('#ct').onchange=e=>$('#cs').innerHTML=srcOpts(e.target.value);
- $('#app .wrap').oninput=e=>{const x=e.target,r=mo.rows[x.dataset.r];if(!r)return;const k=x.dataset.k;
-  if(k==='n')r.note=x.value;else{const v=Math.max(0,+x.value||0);if(k==='g'){r.g=v;x.className='g '+(v?'v1':'v0')}else{r.v[x.dataset.f][k]=v;x.className=cls(v)}$('#ft').innerHTML=foot(mo)}dirty()}}
+$('#app').innerHTML=`<div class="row" style="margin-bottom:10px">⚡ Quick fill <select class="inp" id="ct">${mo.rows.map(r=>`<option value="${r.d}" ${r.d===t0?'selected':''}>${lbl(r.d)}</option>`).join('')}</select> from <select class="inp" id="cs">${srcOpts(t0)}</select><button class="p" id="cg">Copy</button>
+<span class="mu">Copies meals only (not grocery). Click a date to open that day · click a name for their history.</span></div>
+<div class="wrap"><table><thead><tr><th>Date</th><th>Grocery ₹</th>${mo.friends.map(f=>`<th colspan="2" class="lk" data-p="${esc(f)}">${esc(f)}</th>`).join('')}<th>Notes</th></tr></thead><tbody>
+${mo.rows.map((r,i)=>`<tr class="${r.d===TK?'today':''} ${isWE(r.d)?'we':''}"><td><a class="lk" data-day="${r.d}">${lbl(r.d)}</a></td>
+<td><input class="g ${r.g?'v1':'v0'}" type="number" min="0" data-r="${i}" data-k="g" value="${r.g}"></td>
+${r.v.map((p,j)=>p.map((x,k)=>`<td><input class="${cls(x)}" type="number" min="0" step="1" data-r="${i}" data-f="${j}" data-k="${k}" value="${x}"></td>`).join('')).join('')}
+<td><input class="nt" data-r="${i}" data-k="n" value="${esc(r.note)}"></td></tr>`).join('')}</tbody><tfoot id="ft">${foot(mo)}</tfoot></table></div>`;
+const t=$('tr.today');if(t)t.scrollIntoView({block:'center'});
+$('#ct').onchange=e=>$('#cs').innerHTML=srcOpts(e.target.value);
+$('#app .wrap').oninput=e=>{const x=e.target,r=mo.rows[x.dataset.r];if(!r)return;const k=x.dataset.k;
+ if(k==='n')r.note=x.value;else{const v=Math.max(0,+x.value||0);if(k==='g'){r.g=v;x.className='g '+(v?'v1':'v0')}else{r.v[x.dataset.f][k]=v;x.className=cls(v)}$('#ft').innerHTML=foot(mo)}dirty()}}
 function cardHTML(mo,r,i){const[l,d]=r.v[i],step=(k,v,t)=>`<div class="mr"><span>${t}</span><div class="sp"><button data-s="${i}" data-k="${k}" data-d="-1">−</button><b class="${v>1?'gn':v?'on':''}">${v}</b><button data-s="${i}" data-k="${k}" data-d="1">+</button></div></div>`;
- return`<div class="pc ${l||d?'on':''}" id="c${i}"><h3 data-p="${esc(mo.friends[i])}">${esc(mo.friends[i])} <span class="mu" style="font-weight:400;font-size:12px">${l>1||d>1?'· with guests':''}</span></h3>${step(0,l,'🍛 Lunch')}${step(1,d,'🌙 Dinner')}</div>`}
+return`<div class="pc ${l||d?'on':''}" id="c${i}"><h3 data-p="${esc(mo.friends[i])}">${esc(mo.friends[i])} <span class="mu" style="font-weight:400;font-size:12px">${l>1||d>1?'· with guests':''}</span></h3>${step(0,l,'🍛 Lunch')}${step(1,d,'🌙 Dinner')}</div>`}
 const sumLine=r=>$('#sm').textContent=`Lunches: ${r.v.reduce((s,p)=>s+p[0],0)} · Dinners: ${r.v.reduce((s,p)=>s+p[1],0)} · Tap a name to see their history`;
 function entryView(){const mo=ens(sel.slice(0,7)),r=mo.rows.find(x=>x.d===sel);
- $('#app').innerHTML=`<div class="card"><div class="row"><button id="dp">‹</button><input type="date" class="inp" id="dd" value="${sel}"><button id="dn">›</button>
- <b style="font-size:18px">${new Date(sel+'T12:00').toLocaleString('en',{weekday:'long',day:'numeric',month:'long'})}</b>${sel===TK?'<span class="pill ok">Today</span>':'<button id="tt">Go to today</button>'}</div>
- <div class="row" style="margin-top:12px">Grocery ₹<input class="inp" type="number" min="0" id="gg" value="${r.g}" style="width:110px;font-size:18px"><span style="flex:1"></span>
- Copy from<select class="inp" id="cs">${srcOpts(sel)}</select><button class="p" id="cp">Copy</button><button id="cl">Clear day</button></div></div>
- <p class="mu" id="sm"></p><div class="pg">${mo.friends.map((_,i)=>cardHTML(mo,r,i)).join('')}</div>`;
- $('#gg').oninput=e=>{r.g=Math.max(0,+e.target.value||0);dirty()};$('#dd').onchange=e=>{if(e.target.value){sel=e.target.value;render()}};sumLine(r)}
+$('#app').innerHTML=`<div class="card"><div class="row"><button id="dp">‹</button><input type="date" class="inp" id="dd" value="${sel}"><button id="dn">›</button>
+<b style="font-size:18px">${new Date(sel+'T12:00').toLocaleString('en',{weekday:'long',day:'numeric',month:'long'})}</b>${sel===TK?'<span class="pill ok">Today</span>':'<button id="tt">Go to today</button>'}</div>
+<div class="row" style="margin-top:12px">Grocery ₹<input class="inp" type="number" min="0" id="gg" value="${r.g}" style="width:110px;font-size:18px"><span style="flex:1"></span>
+Copy from<select class="inp" id="cs">${srcOpts(sel)}</select><button class="p" id="cp">Copy</button><button id="cl">Clear day</button></div></div>
+<p class="mu" id="sm"></p><div class="pg">${mo.friends.map((_,i)=>cardHTML(mo,r,i)).join('')}</div>`;
+$('#gg').oninput=e=>{r.g=Math.max(0,+e.target.value||0);dirty()};$('#dd').onchange=e=>{if(e.target.value){sel=e.target.value;render()}};sumLine(r)}
 const mealC=n=>n?'✓'+(n>1?' ×'+n:''):'–';
 function personView(){const mo=M(),i=mo.friends.indexOf(who),mt=$('#mo').selectedOptions[0].text;
- if(i<0){$('#app').innerHTML=`<button id="bk">← Back</button><p class="mu">${esc(who)} has no entries in ${mt}.</p>`;return}
- const c=calc(mo,method),p=c.rows[i],rate=c.T?c.G/c.T:0,days=mo.rows.filter(r=>r.v[i][0]||r.v[i][1]);
- $('#app').innerHTML=`<div class="row"><button id="bk">← Back</button><h2 style="margin:0">${esc(who)}</h2><span class="mu">${mt}</span></div>
- <div class="grid"><div class="card"><div class="mu">Meals</div><div class="big">${p.l}L + ${p.d}D</div><div class="mu">${days.length} days ate · ${mo.rows.length-days.length} days off</div></div>
- <div class="card"><div class="mu">Grocery share</div><div class="big">${inr(p.g)}</div></div><div class="card"><div class="mu">Cook fee (${method==='equal'?'equal split':'by attendance'})</div><div class="big">${inr(p.c)}</div></div><div class="card"><div class="mu">Total owed</div><div class="big ok">${inr(p.t)}</div></div></div>
- <div class="wrap"><table><thead><tr><th>Date</th><th>Lunch</th><th>Dinner</th><th>Units</th><th>Meal cost ₹</th></tr></thead><tbody>
- ${days.map(r=>{const[l,d]=r.v[i],u=l*mo.lw+d*mo.dw;return`<tr class="${isWE(r.d)?'we':''}"><td><a class="lk" data-day="${r.d}">${lbl(r.d)}</a></td><td>${mealC(l)}</td><td>${mealC(d)}</td><td>${u}</td><td class="r">${inr(u*rate)}</td></tr>`}).join('')}</tbody>
- <tfoot><tr><td>TOTAL</td><td>${p.l}</td><td>${p.d}</td><td>${p.u}</td><td class="r">${inr(p.u*rate)}</td></tr></tfoot></table></div>
- <p class="mu">Meal cost = units × this month's average grocery cost per unit (${inr(rate)}). The cook fee is added on top in Total owed.</p>`}
+if(i<0){$('#app').innerHTML=`<button id="bk">← Back</button><p class="mu">${esc(who)} has no entries in ${mt}.</p>`;return}
+const c=calc(mo,method),p=c.rows[i],rate=c.T?c.G/c.T:0,days=mo.rows.filter(r=>r.v[i][0]||r.v[i][1]);
+$('#app').innerHTML=`<div class="row"><button id="bk">← Back</button><h2 style="margin:0">${esc(who)}</h2><span class="mu">${mt}</span></div>
+<div class="grid"><div class="card"><div class="mu">Meals</div><div class="big">${p.l}L + ${p.d}D</div><div class="mu">${days.length} days ate · ${mo.rows.length-days.length} days off</div></div>
+<div class="card"><div class="mu">Grocery share</div><div class="big">${inr(p.g)}</div></div><div class="card"><div class="mu">Cook fee (${method==='equal'?'equal split':'by attendance'})</div><div class="big">${inr(p.c)}</div></div><div class="card"><div class="mu">Total owed</div><div class="big ok">${inr(p.t)}</div></div></div>
+<div class="wrap"><table><thead><tr><th>Date</th><th>Lunch</th><th>Dinner</th><th>Units</th><th>Meal cost ₹</th></tr></thead><tbody>
+${days.map(r=>{const[l,d]=r.v[i],u=l*mo.lw+d*mo.dw;return`<tr class="${isWE(r.d)?'we':''}"><td><a class="lk" data-day="${r.d}">${lbl(r.d)}</a></td><td>${mealC(l)}</td><td>${mealC(d)}</td><td>${u}</td><td class="r">${inr(u*rate)}</td></tr>`}).join('')}</tbody>
+<tfoot><tr><td>TOTAL</td><td>${p.l}</td><td>${p.d}</td><td>${p.u}</td><td class="r">${inr(p.u*rate)}</td></tr></tfoot></table></div>
+<p class="mu">Meal cost = units × this month's average grocery cost per unit (${inr(rate)}). The cook fee is added on top in Total owed.</p>`}
 function splitView(){const mo=M(),c=calc(mo,method),mx=Math.max(...c.rows.map(r=>r.t),1),okSum=Math.abs(c.sum-(c.G+c.F))<0.005&&c.T>0;
- $('#app').innerHTML=`<div class="row"><button class="${method==='equal'?'p':''}" data-m="equal">Equal cook fee</button><button class="${method==='att'?'p':''}" data-m="att">Cook fee by attendance</button>
- <span class="mu">${method==='equal'?'Cook fee ÷ everyone equally · groceries by meals eaten':'Cook fee AND groceries both by meals eaten'}</span></div>
- <div class="grid">${c.rows.map(r=>`<div class="card"><div class="mu"><a class="lk" data-p="${esc(r.n)}">${esc(r.n)}</a></div><div class="big">${inr(r.t)}</div><div class="mu">${r.l}L + ${r.d}D · ${r.u} units</div><div class="bar"><i style="width:${r.t/mx*100}%"></i></div></div>`).join('')}</div>
- <div class="wrap"><table><thead><tr><th>Friend</th><th>Lunch</th><th>Dinner</th><th>Units</th><th>Grocery ₹</th><th>Cook fee ₹</th><th>Total ₹</th></tr></thead><tbody>
- ${c.rows.map(r=>`<tr><td><a class="lk" data-p="${esc(r.n)}">${esc(r.n)}</a></td><td>${r.l}</td><td>${r.d}</td><td>${r.u}</td><td class="r">${inr(r.g)}</td><td class="r">${inr(r.c)}</td><td class="r"><b>${inr(r.t)}</b></td></tr>`).join('')}</tbody>
- <tfoot><tr><td>TOTAL</td><td></td><td></td><td>${c.T}</td><td class="r">${inr(c.G)}</td><td class="r">${inr(c.F)}</td><td class="r">${inr(c.sum)}</td></tr></tfoot></table></div>
- <div class="card" style="margin-top:14px"><b>Verification</b><ul>
- <li><span>Days in this month</span><span>${c.days} (calendar: ${dim(cur.y,cur.m)}) <b class="${c.days===dim(cur.y,cur.m)?'ok':'bad'}">${c.days===dim(cur.y,cur.m)?'✓':'✗'}</b></span></li>
- <li><span>Groceries + cook fee</span><span>${inr(c.G+c.F)}</span></li><li><span>Sum of everyone's share</span><span>${inr(c.sum)} <b class="${okSum?'ok':'bad'}">${okSum?'✓ matches':'✗ mismatch'}</b></span></li>
- <li><span>Avg grocery cost / meal unit</span><span>${c.T?inr(c.G/c.T):'—'}</span></li></ul>${c.T?'':'<p class="bad">No meals logged yet — groceries cannot be split.</p>'}
- <p class="mu">Shares are rounded to the paisa with the leftover paise handed out fairly, so the total always matches exactly.</p></div>`}
+$('#app').innerHTML=`<div class="row"><button class="${method==='equal'?'p':''}" data-m="equal">Equal cook fee</button><button class="${method==='att'?'p':''}" data-m="att">Cook fee by attendance</button>
+<span class="mu">${method==='equal'?'Cook fee ÷ everyone equally · groceries by meals eaten':'Cook fee AND groceries both by meals eaten'}</span></div>
+<div class="grid">${c.rows.map(r=>`<div class="card"><div class="mu"><a class="lk" data-p="${esc(r.n)}">${esc(r.n)}</a></div><div class="big">${inr(r.t)}</div><div class="mu">${r.l}L + ${r.d}D · ${r.u} units</div><div class="bar"><i style="width:${r.t/mx*100}%"></i></div></div>`).join('')}</div>
+<div class="wrap"><table><thead><tr><th>Friend</th><th>Lunch</th><th>Dinner</th><th>Units</th><th>Grocery ₹</th><th>Cook fee ₹</th><th>Total ₹</th></tr></thead><tbody>
+${c.rows.map(r=>`<tr><td><a class="lk" data-p="${esc(r.n)}">${esc(r.n)}</a></td><td>${r.l}</td><td>${r.d}</td><td>${r.u}</td><td class="r">${inr(r.g)}</td><td class="r">${inr(r.c)}</td><td class="r"><b>${inr(r.t)}</b></td></tr>`).join('')}</tbody>
+<tfoot><tr><td>TOTAL</td><td></td><td></td><td>${c.T}</td><td class="r">${inr(c.G)}</td><td class="r">${inr(c.F)}</td><td class="r">${inr(c.sum)}</td></tr></tfoot></table></div>
+<div class="card" style="margin-top:14px"><b>Verification</b><ul>
+<li><span>Days in this month</span><span>${c.days} (calendar: ${dim(cur.y,cur.m)}) <b class="${c.days===dim(cur.y,cur.m)?'ok':'bad'}">${c.days===dim(cur.y,cur.m)?'✓':'✗'}</b></span></li>
+<li><span>Groceries + cook fee</span><span>${inr(c.G+c.F)}</span></li><li><span>Sum of everyone's share</span><span>${inr(c.sum)} <b class="${okSum?'ok':'bad'}">${okSum?'✓ matches':'✗ mismatch'}</b></span></li>
+<li><span>Avg grocery cost / meal unit</span><span>${c.T?inr(c.G/c.T):'—'}</span></li></ul>${c.T?'':'<p class="bad">No meals logged yet — groceries cannot be split.</p>'}
+<p class="mu">Shares are rounded to the paisa with the leftover paise handed out fairly, so the total always matches exactly.</p></div>`}
 function setView(){const mo=M(),s=db.settings;
- const rawPreview=lastRawResponse?esc(JSON.stringify(lastRawResponse,null,2).slice(0,2500)):'No live response captured yet.';
- $('#app').innerHTML=`<div class="card"><b>${$('#mo').selectedOptions[0].text} — cook fee & weights</b><p class="mu">Changes apply to this month only; new months copy the latest month.</p>
- <div class="row">Cook fee ₹<input class="inp" type="number" id="fee" value="${mo.fee}" style="width:100px">Lunch weight<input class="inp" type="number" step="0.1" id="lw" value="${mo.lw}" style="width:70px">Dinner weight<input class="inp" type="number" step="0.1" id="dw" value="${mo.dw}" style="width:70px"></div></div>
- <div class="card" style="margin-top:14px"><b>Friends (${s.friends.filter(f=>f.active).length} active)</b><ul>${s.friends.map((f,i)=>`<li><span class="${f.active?'':'mu'}">${esc(f.name)}${f.active?'':' (removed)'}</span><button data-x="${i}">${f.active?'Remove':'Re-add'}</button></li>`).join('')}</ul>
- <div class="row" style="margin-top:12px"><input class="inp" id="nn" placeholder="New friend name"><button class="p" id="add">+ Add friend</button></div>
- <p class="mu">Adding/removing updates the month you're viewing and all future months. Past months keep their original columns and data.</p></div>
- <div class="card" style="margin-top:14px"><b>☁️ Cloud sync — Google Sheet</b><p class="mu">${cfg.url?'Connected: every edit saves to your Google Sheet, and changes from others appear automatically.':'Paste the Apps Script Web App URL and your passphrase (kept only in this browser).'}</p>
- <div class="row"><input class="inp" id="cu" placeholder="https://script.google.com/macros/s/…/exec" style="flex:1;min-width:240px" value="${esc(cfg.url||'')}"><input class="inp" id="ck" type="password" placeholder="passphrase" value="${esc(cfg.token||'')}"><button class="p" id="cc">🔄 Test & Reload from Sheet</button>${cfg.url?'<button id="cd">Disconnect</button>':''}</div>
- <details style="margin-top:12px"><summary class="lk" style="font-size:12px">🔍 Live Response Inspector (Raw JSON from Apps Script)</summary><pre style="margin-top:8px;padding:10px;background:var(--bg);border:1px solid var(--line);border-radius:10px;overflow:auto;max-height:240px;font-size:12px">${rawPreview}</pre></details></div>`;
- ['fee','lw','dw'].forEach(k=>$('#'+k).oninput=e=>{const v=+e.target.value||0;mo[k]=v;db.settings[k]=v;dirty()})}
-function render(){if(tab==='entry')cur={y:+sel.slice(0,4),m:+sel.slice(5,7)};monthOpts();document.querySelectorAll('.tabs [data-t]').forEach(b=>b.classList.toggle('on',b.dataset.t===(tab==='person'?ptab:tab)));({entry:entryView,log:logView,split:splitView,set:setView,person:personView})[tab]()}
-function friendOp(name,on,force=false){const mo=M(),f=db.settings.friends.find(x=>x.name===name),i=mo.friends.indexOf(name);
- if(on){if(i<0){mo.friends.push(name);mo.rows.forEach(r=>r.v.push([0,0]))}}
- else if(i>=0){
-  if(!force && mo.rows.some(r=>r.v[i][0]||r.v[i][1])){
-   showMsg(name+' has data this month. Removing deletes their columns for this month (past months stay intact). Continue?', ()=>{friendOp(name,on,true);dirty(1);render()});
-   return false;
-  }
-  mo.friends.splice(i,1);mo.rows.forEach(r=>r.v.splice(i,1));
- }
- f.active=on;Object.keys(db.months).filter(k=>k>KEY()).forEach(k=>{const m=db.months[k],j=m.friends.indexOf(name);if(on&&j<0){m.friends.push(name);m.rows.forEach(r=>r.v.push([0,0]))}if(!on&&j>=0){m.friends.splice(j,1);m.rows.forEach(r=>r.v.splice(j,1))}});return true}
+$('#app').innerHTML=`<div class="card"><b>${$('#mo').selectedOptions[0].text} — cook fee & weights</b><p class="mu">Changes apply to this month only; new months copy the latest month.</p>
+<div class="row">Cook fee ₹<input class="inp" type="number" id="fee" value="${mo.fee}" style="width:100px">Lunch weight<input class="inp" type="number" step="0.1" id="lw" value="${mo.lw}" style="width:70px">Dinner weight<input class="inp" type="number" step="0.1" id="dw" value="${mo.dw}" style="width:70px"></div></div>
+<div class="card" style="margin-top:14px"><b>Friends (${s.friends.filter(f=>f.active).length} active)</b><ul>${s.friends.map((f,i)=>`<li><span class="${f.active?'':'mu'}">${esc(f.name)}${f.active?'':' (removed)'}</span><button data-x="${i}">${f.active?'Remove':'Re-add'}</button></li>`).join('')}</ul>
+<div class="row" style="margin-top:12px"><input class="inp" id="nn" placeholder="New friend name"><button class="p" id="add">+ Add friend</button></div>
+<p class="mu">Adding/removing updates the month you're viewing and all future months. Past months keep their original columns and data.</p></div>
+<div class="card" style="margin-top:14px"><b>☁️ Google Sheet connection</b><p class="mu">Everything is read from and written to your Google Sheet. Edits stay on screen until you click 💾 Save.</p>
+<div class="row"><input class="inp" id="cu" style="flex:1;min-width:240px" value="${esc(cfg.url)}"><input class="inp" id="ck" type="password" placeholder="Passphrase" value="${esc(cfg.token)}"></div>
+<div class="row" style="margin-top:10px"><button class="p" id="cc">Reconnect & reload</button><button id="tst">🩺 Run connection test</button><button id="imp">📂 Import .xlsx (restore)</button><button id="cd">Disconnect</button></div><pre id="tr" class="mu" style="white-space:pre-wrap"></pre></div>`;
+['fee','lw','dw'].forEach(k=>$('#'+k).oninput=e=>{const v=+e.target.value||0;mo[k]=v;db.settings[k]=v;dirty()})}
+function render(){if(!db){connectView();btn();return}if(tab==='entry')cur={y:+sel.slice(0,4),m:+sel.slice(5,7)};monthOpts();document.querySelectorAll('.tabs [data-t]').forEach(b=>b.classList.toggle('on',b.dataset.t===(tab==='person'?ptab:tab)));({entry:entryView,log:logView,split:splitView,set:setView,person:personView})[tab]();btn();warnStray();if(!db.settings.friends.length&&tab!=='set')$('#app').insertAdjacentHTML('afterbegin','<div class="card" style="border-color:var(--wa);margin-bottom:14px">📭 No friends in the sheet yet. Open <b>Settings</b>, add your friends and the cook fee, then click <b>💾 Save</b>.</div>')}
+function friendOp(name,on){const mo=M(),f=db.settings.friends.find(x=>x.name===name),i=mo.friends.indexOf(name);
+if(on){if(i<0){mo.friends.push(name);mo.rows.forEach(r=>r.v.push([0,0]))}}
+else if(i>=0){if(mo.rows.some(r=>r.v[i][0]||r.v[i][1])&&!confirm(name+' has data this month. Removing deletes their columns for this month (past months stay intact). Continue?'))return false;mo.friends.splice(i,1);mo.rows.forEach(r=>r.v.splice(i,1))}
+f.active=on;Object.keys(db.months).filter(k=>k>KEY()).forEach(k=>{const m=db.months[k],j=m.friends.indexOf(name);if(on&&j<0){m.friends.push(name);m.rows.forEach(r=>r.v.push([0,0]))}if(!on&&j>=0){m.friends.splice(j,1);m.rows.forEach(r=>r.v.splice(j,1))}});return true}
 document.addEventListener('click',e=>{const t=e.target,sb=t.closest('[data-s]');
- if(sb){const mo=ens(sel.slice(0,7)),r=mo.rows.find(x=>x.d===sel),i=+sb.dataset.s,k=+sb.dataset.k;r.v[i][k]=Math.max(0,r.v[i][k]+ +sb.dataset.d);$('#c'+i).outerHTML=cardHTML(mo,r,i);sumLine(r);dirty();return}
- const dy=t.closest('[data-day]');if(dy){sel=dy.dataset.day;tab='entry';render();scrollTo(0,0);return}
- const pn=t.closest('[data-p]');if(pn){who=pn.dataset.p;if(tab!=='person')ptab=tab;tab='person';render();scrollTo(0,0);return}
- const b=t.closest('button');if(!b)return;
- if(b.dataset.t){tab=b.dataset.t;render()}else if(b.dataset.m){method=b.dataset.m;render()}
- else if(b.id==='pm'||b.id==='nm'){cur.m+=b.id==='pm'?-1:1;if(cur.m<1){cur.m=12;cur.y--}if(cur.m>12){cur.m=1;cur.y++}sel=KEY()+'-'+pad(Math.min(+sel.slice(8),dim(cur.y,cur.m)));render()}
- else if(b.id==='td'||b.id==='tt'){cur={y:now.getFullYear(),m:now.getMonth()+1};sel=TK;render()}
- else if(b.id==='dp'||b.id==='dn'){sel=addD(sel,b.id==='dp'?-1:1);render()}
- else if(b.id==='cp'){const s=$('#cs').value;if(s){copyDay(sel,s);render()}}
- else if(b.id==='cg'){const s=$('#cs').value;if(s){copyDay($('#ct').value,s);render()}}
- else if(b.id==='cl'){showMsg('Clear lunch/dinner for this day?',()=>{ens(sel.slice(0,7)).rows.find(x=>x.d===sel).v=M().friends.map(()=>[0,0]);dirty();render()})}
- else if(b.id==='bk'){tab=ptab;render()}
- else if(b.id==='cc'){const old=cfg;cfg={url:$('#cu').value.trim(),token:$('#ck').value};st('⏳ Fetching live data from Google Sheet…');cloudGet().then(n=>{
-  db=n;localStorage.setItem('mess',JSON.stringify(db));localStorage.setItem('messcfg',JSON.stringify(cfg));touched.clear();render();
-  st(`✅ Loaded live from Google Sheet (${db.settings.friends.length} friends, ${Object.keys(db.months).length} months)`,'ok');
- }).catch(x=>{cfg=old;st('❌ Could not connect: '+x.message,'err')})}
- else if(b.id==='cd'){cfg={};localStorage.removeItem('messcfg');render();st('Disconnected — browser copy only','warn')}
- else if(b.id==='op')openFile();else if(b.id==='ex')XLSX.writeFile(toWB(),'expenses.xlsx');
- else if(b.id==='add'){const n=$('#nn').value.trim();if(!n)return;const f=db.settings.friends.find(x=>x.name.toLowerCase()===n.toLowerCase());if(f&&f.active)return showMsg('Already exists');
-  if(f)friendOp(f.name,true);else{db.settings.friends.push({name:n,active:true});friendOp(n,true)}dirty(1);render()}
- else if(b.dataset.x!==undefined){const f=db.settings.friends[b.dataset.x];if(friendOp(f.name,!f.active)){dirty(1);render()}}});
+if(sb){const mo=ens(sel.slice(0,7)),r=mo.rows.find(x=>x.d===sel),i=+sb.dataset.s,k=+sb.dataset.k;r.v[i][k]=Math.max(0,r.v[i][k]+ +sb.dataset.d);$('#c'+i).outerHTML=cardHTML(mo,r,i);sumLine(r);dirty();return}
+const dy=t.closest('[data-day]');if(dy){sel=dy.dataset.day;tab='entry';render();scrollTo(0,0);return}
+const pn=t.closest('[data-p]');if(pn){who=pn.dataset.p;if(tab!=='person')ptab=tab;tab='person';render();scrollTo(0,0);return}
+const b=t.closest('button');if(!b)return;
+if(b.dataset.t){tab=b.dataset.t;render()}else if(b.dataset.m){method=b.dataset.m;render()}
+else if(b.id==='pm'||b.id==='nm'){cur.m+=b.id==='pm'?-1:1;if(cur.m<1){cur.m=12;cur.y--}if(cur.m>12){cur.m=1;cur.y++}sel=KEY()+'-'+pad(Math.min(+sel.slice(8),dim(cur.y,cur.m)));render()}
+else if(b.id==='td'||b.id==='tt'){cur={y:now.getFullYear(),m:now.getMonth()+1};sel=TK;render()}
+else if(b.id==='dp'||b.id==='dn'){sel=addD(sel,b.id==='dp'?-1:1);render()}
+else if(b.id==='cp'){const s=$('#cs').value;if(s){copyDay(sel,s);render()}}
+else if(b.id==='cg'){const s=$('#cs').value;if(s){copyDay($('#ct').value,s);render()}}
+else if(b.id==='cl'){if(confirm('Clear lunch/dinner for this day?')){ens(sel.slice(0,7)).rows.find(x=>x.d===sel).v=M().friends.map(()=>[0,0]);dirty();render()}}
+else if(b.id==='bk'){tab=ptab;render()}
+else if(b.id==='cc'){cfg.url=$('#cu').value.trim();cfg.token=$('#ck').value;saveCfg();loadSheet()}
+else if(b.id==='cd'){cfg.token='';saveCfg();db=null;loaded=false;touched.clear();lastErr='';render();st('Disconnected','warn')}
+else if(b.id==='tst')runTest();else if(b.id==='saveBtn')save();
+else if(b.id==='rl'){if(touched.size&&!confirm('Discard unsaved changes and reload from the Google Sheet?'))return;loadSheet()}
+else if(b.id==='imp')$('#fi').click();else if(b.id==='ex')XLSX.writeFile(toWB(),'expenses-backup-'+TK+'.xlsx');
+else if(b.id==='add'){const n=$('#nn').value.trim();if(!n)return;const f=db.settings.friends.find(x=>x.name.toLowerCase()===n.toLowerCase());if(f&&f.active)return alert('Already exists');
+ if(f)friendOp(f.name,true);else{db.settings.friends.push({name:n,active:true});friendOp(n,true)}dirty(1);render()}
+else if(b.dataset.x!==undefined){const f=db.settings.friends[b.dataset.x];if(friendOp(f.name,!f.active)){dirty(1);render()}}});
 $('#mo').onchange=e=>{const[y,m]=e.target.value.split('-').map(Number);cur={y,m};sel=KEY()+'-'+pad(Math.min(+sel.slice(8),dim(y,m)));render()};
-$('#fi').onchange=async e=>{const f=e.target.files[0];if(f)load(await f.arrayBuffer(),f.name)};
-(async()=>{
- localStorage.removeItem('mess');
- db=EMPTY_DB();
- render();
- if(cfg.url){
-  st('⏳ Fetching live data from Google Sheet…');
-  try{
-   const n=await cloudGet();
-   db=n;
-   const mKeys=Object.keys(db.months).sort();
-   if(mKeys.length&&!db.months[KEY()]){
-    const latest=mKeys[mKeys.length-1];
-    const[y,m]=latest.split('-').map(Number);
-    cur={y,m};sel=latest+'-01';
-   }
-   localStorage.setItem('mess',JSON.stringify(db));
-   render();
-   st(`✅ Loaded live from Google Sheet (${db.settings.friends.length} friends, ${Object.keys(db.months).length} months)`,'ok');
-  }catch(e){
-   db=EMPTY_DB();
-   render();
-   st('❌ Cannot reach Google Sheet: '+e.message,'err');
-  }
- }else{
-  st('⚠ No Google Sheet URL configured · connect in Settings','warn');
- }
-})();
+$('#fi').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(f)importXlsx(f)};
+loadSheet();
 </script></body></html>
